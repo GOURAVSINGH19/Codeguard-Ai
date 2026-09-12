@@ -1,0 +1,29 @@
+{
+  "name": "workers",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "dependencies": {
+    "bullmq": "^6.3.4",
+    "dotenv": "^17.4.2",
+    "ioredis": "^6.0.0",
+    "octokit": "^5.0.5",
+    "openai": "^7.15.0",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

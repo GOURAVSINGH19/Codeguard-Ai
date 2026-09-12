@@ -1,0 +1,19 @@
+{
+  "name": "@codeguard/types",
+  "version": "0.0.0",
+  "description": "Shared TypeScript types and Zod schemas for CodeGuard AI",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "dependencies": {
+    "zod": "^4.6.2"
+  }
+}

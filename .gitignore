@@ -1,0 +1,34 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Environment & Secret files
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+**/*.env
+
+# Build & Cache Directories
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+out
+**/out
+.vercel
+**/.vercel
+.turbo
+**/.turbo
+*.tsbuildinfo
+
+# OS & Logs
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
