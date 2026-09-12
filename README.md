@@ -27,131 +27,171 @@ Instead of requiring developers to manually copy-paste code snippets into a webs
 
 ---
 
-## 🏗️ Architecture & Event-Driven Workflow
+## 📐 GitHub-Optimized Architecture & Flowcharts
 
-### High-Level System Architecture
+### 1. End-to-End System Execution Flowchart
 
 ```mermaid
-graph TD
-    subgraph GitHub ["Octokit & GitHub Platform"]
-        PR["Developer Opens / Updates PR"]
-        Webhook["GitHub Webhook Event"]
-        Comments["Inline PR Review Comments"]
+flowchart TD
+    subgraph Trigger["1. Trigger Source"]
+        A1["Developer Opens/Updates PR on GitHub"]
+        A2["User Triggers Review on Web Dashboard"]
     end
 
-    subgraph API ["Ingestion & Auth Layer"]
-        NextAPI["Next.js App Router API (/api/webhooks/github)"]
-        AuthGuard["Clerk Auth & Scoped Authorization"]
+    subgraph Ingestion["2. Ingestion & Auth Layer"]
+        B1["GitHub Webhook Event: POST /api/webhooks/github"]
+        B2["Manual API Trigger: POST /api/github/review"]
+        B3{"Verify HMAC Signature & Auth Token"}
     end
 
-    subgraph Queue ["Background Job Queue"]
-        RedisQueue["BullMQ / Job Queue"]
-        Worker["Async Review Worker"]
+    subgraph Orchestration["3. Queue & Async Orchestration"]
+        C1[("Save Review in DB: status = pending")]
+        C2["Enqueue Review Job into Redis / BullMQ"]
+        C3["Return HTTP 202 Accepted Immediately"]
     end
 
-    subgraph Pipeline ["AI Review & Analysis Engine"]
-        DiffExtract["Octokit Diff Parser"]
-        LLMEngine["Llama 3.3 70B / Groq Engine"]
-        ZodValidator["Zod Output Validator"]
-        Deduplicator["SHA256 Fingerprint Engine"]
+    subgraph WorkerPipeline["4. Async Worker Execution"]
+        D1["Worker Dequeues Review Job"]
+        D2["Octokit REST API Fetches PR Patch Diff"]
+        D3["Parse Modified Files & Line Mappings"]
     end
 
-    subgraph Database ["Database & Persistence Layer"]
-        NeonDB[("Neon PostgreSQL + pgvector")]
-        DrizzleORM["Drizzle ORM"]
+    subgraph AIReview["5. AI Analysis Engine"]
+        E1["Format Diff into Structured Prompt (v2.1)"]
+        E2["Send Prompt to Llama 3.3 70B Engine"]
+        E3["Validate Structured Output with Zod Schema"]
     end
 
-    PR --> Webhook
-    Webhook --> NextAPI
-    AuthGuard --> NextAPI
-    NextAPI --> RedisQueue
-    RedisQueue --> Worker
-    Worker --> DiffExtract
-    DiffExtract --> LLMEngine
-    LLMEngine --> ZodValidator
-    ZodValidator --> Deduplicator
-    Deduplicator --> DrizzleORM
-    Deduplicator --> NeonDB
-    Deduplicator --> Comments
+    subgraph Deduplication["6. Deduplication & Persistence"]
+        F1["Compute SHA256 Issue Fingerprint"]
+        F2{"Check Existing Fingerprints in DB"}
+        F3["Skip Previously Posted Issues"]
+        F4[("Save Findings & Telemetry: status = completed")]
+    end
+
+    subgraph Notification["7. GitHub Inline Comments"]
+        G1["Format GitHub Markdown Review Comments"]
+        G2["Post Inline Comments via Octokit Review API"]
+        G3["Fallback to Octokit Issue Comment API"]
+        G4["Review Comments Appear on GitHub PR!"]
+    end
+
+    A1 --> B1
+    A2 --> B2
+    B1 --> B3
+    B2 --> B3
+    B3 -->|Valid| C1
+    C1 --> C2
+    C2 --> C3
+    C2 --> D1
+    D1 --> D2
+    D2 --> D3
+    D3 --> E1
+    E1 --> E2
+    E2 --> E3
+    E3 --> F1
+    F1 --> F2
+    F2 -->|New Issue| F4
+    F2 -->|Duplicate| F3
+    F4 --> G1
+    G1 --> G2
+    G2 -->|Success| G4
+    G2 -->|Fallback| G3
+    G3 --> G4
 ```
 
 ---
 
-## 🔄 Webhook PR Review Sequence
+### 2. Step-by-Step Sequence Diagram
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Dev as Developer
-    participant GH as GitHub Platform
-    participant Webhook as CodeGuard Webhook Handler
-    participant Queue as Redis / BullMQ Queue
+    participant GH as GitHub REST API
+    participant Webhook as Webhook Route Handler
+    participant Queue as BullMQ Job Queue
     participant Worker as Background Worker
-    participant LLM as Llama 3.3 70B Engine
+    participant LLM as Llama 3.3 70B Model
     participant DB as Neon PostgreSQL DB
 
-    Dev->>GH: Open / Update Pull Request
-    GH->>Webhook: POST /api/webhooks/github (pull_request event)
+    Dev->>GH: Open PR or Push Commits
+    GH->>Webhook: POST /api/webhooks/github (pull_request)
     Webhook->>DB: Insert Review Record (status: pending)
-    Webhook->>Queue: Enqueue Review Job { reviewId, prId, repoId }
-    Webhook-->>GH: HTTP 202 Accepted (Immediate Response)
+    Webhook->>Queue: Enqueue Job { reviewId, prId, repoId }
+    Webhook-->>GH: HTTP 202 Accepted (Non-blocking)
     
-    Queue->>Worker: Consume Job
-    Worker->>GH: Fetch PR Diff (Octokit REST)
+    Queue->>Worker: Consume Review Job
+    Worker->>GH: GET /repos/{owner}/{repo}/pulls/{pr}/files
+    GH-->>Worker: Return Unified Patch Diffs & Offsets
+    
     Worker->>LLM: Stream Diff & Prompt Context
-    LLM-->>Worker: Structured Findings (JSON)
-    Worker->>Worker: Validate Zod Schema & Fingerprint Issues
-    Worker->>DB: Save Telemetry & Issues (status: completed)
-    Worker->>GH: Post Line-Anchored Comments to PR
+    LLM-->>Worker: Structured JSON Findings (Issues & Fixes)
+    
+    Worker->>Worker: Zod Schema Parse & SHA256 Fingerprinting
+    Worker->>DB: Fetch Existing Issue Fingerprints
+    DB-->>Worker: Existing Fingerprints List
+    
+    Worker->>Worker: Exclude Duplicate Findings
+    Worker->>DB: Update Review Status (completed) & Telemetry
+    
+    Worker->>GH: POST Line-Anchored Inline Comments (Octokit)
+    GH-->>Dev: Inline Comments Published on GitHub PR
 ```
+
+---
+
+## 🔍 Detailed Component Breakdown: How Each Part Works
+
+### 1. Ingestion & Authentication Layer
+- **GitHub Webhook Listener (`/api/webhooks/github`)**: Listens for incoming GitHub `pull_request` events (`opened`, `synchronize`, `reopened`). Validates cryptographic `X-Hub-Signature-256` HMAC headers using `GITHUB_WEBHOOK_SECRET`.
+- **User Scoped Auth (Clerk + GitHub OAuth)**: Ensures API endpoints verify current authenticated user session (`review.userId === currentUser.id`).
+
+### 2. Asynchronous Job Queue Pipeline
+- **Decoupled Architecture**: HTTP Webhook endpoints respond with `202 Accepted` immediately, preventing GitHub webhook timeouts.
+- **BullMQ + Redis / Node Worker**: Enqueues payload parameters (`reviewId`, `installationId`, `repositoryId`, `pullRequestNumber`).
+- **State Machine Engine**: Tracks status updates (`pending` $\rightarrow$ `processing` $\rightarrow$ `completed` / `failed`).
+
+### 3. Diff Extraction & Line Anchoring
+- **Octokit Diff Extractor**: Uses standard GitHub REST APIs to fetch precise modified files and unified diff patches (`@@ -start,count +start,count @@`).
+- **Line Matching Engine**: Converts patch chunk line offsets to exact file line numbers to ensure AI suggestions anchor to the exact line modified in the PR.
+
+### 4. AI Analysis & Telemetry Engine
+- **Llama 3.3 70B Model**: Prompts LLM using structured system guidelines for code quality, security vulnerabilities (OWASP Top 10), performance, and maintainability.
+- **Zod Runtime Validation**: Parses raw LLM outputs through a strict Zod schema (`score`, `summary`, `issues` array).
+- **Observability Telemetry**: Captures performance metrics:
+  ```json
+  {
+    "model": "llama-3.3-70b-versatile",
+    "promptVersion": "v2.1",
+    "durationMs": 12450,
+    "filesReviewed": 7,
+    "linesReviewed": 340,
+    "issuesFound": 4
+  }
+  ```
+
+### 5. Fingerprint Deduplication System
+- Prevents comment spam across subsequent PR commits.
+- Generates a unique fingerprint using:
+  $$\text{Fingerprint} = \text{SHA256}(\text{repository} + \text{pr} + \text{filePath} + \text{lineNumber} + \text{category} + \text{issueHash})$$
+- Queries existing database records to discard duplicates before posting to GitHub.
+
+### 6. Automated GitHub Comment Posting
+- Uses Octokit REST API (`octokit.rest.pulls.createReview`) to post structured multi-line inline comments directly on changed files.
+- Includes automatic fallback to issue comments (`octokit.rest.issues.createComment`) if review permissions or draft constraints prevent inline reviews.
 
 ---
 
 ## ⭐ Production-Grade Engineering Pillars
 
-### 1. ⚡ Asynchronous Background Processing
-HTTP requests never block waiting for an LLM response. 
-- **Immediate Response**: Webhook handlers respond with `HTTP 202 Accepted` within 100ms.
-- **Worker Isolation**: Long-running diff extraction, AI inference, and comment posting happen in background worker threads.
-- **Status State Machine**: Reviews transition reliably through state phases (`pending` $\rightarrow$ `completed` / `failed`).
-
-### 2. 🤖 Webhook-Based Automatic Reviews
-Seamless automated pull request checks triggered directly from GitHub:
-- Listens for `pull_request.opened` and `pull_request.synchronize` events.
-- Extracts changed files, unified diff patches, and additions/deletions.
-- Direct inline comment integration on specific modified lines in GitHub PRs.
-
-### 3. 📊 AI Observability & Performance Telemetry
-Exposes critical operational metrics for monitoring AI behavior and cost:
-
-```json
-{
-  "model": "llama-3.3-70b-versatile",
-  "promptVersion": "v2.1",
-  "durationMs": 12450,
-  "filesReviewed": 7,
-  "linesReviewed": 340,
-  "issuesFound": 4,
-  "tokenUsage": {
-    "promptTokens": 1420,
-    "completionTokens": 380,
-    "totalTokens": 1800
-  }
-}
-```
-
-### 4. 🔁 Fingerprint-Based Comment Deduplication
-Prevents re-posting identical comments when developers push new commits to an open PR:
-
-$$\text{Issue Fingerprint} = \text{SHA256}(\text{repository} + \text{pr} + \text{file} + \text{line} + \text{category} + \text{issueHash})$$
-
-- Checks existing issue fingerprints stored in Neon DB before posting.
-- Skips duplicate issues automatically to keep PR code review threads clean.
-
-### 5. 🛡️ API Hardening & Security
-- **Strict Authorization Scoping**: Enforces tenant security (`review.userId === currentUser.id`).
-- **Validation**: Runtime Zod schema enforcement on incoming API payloads and LLM outputs.
-- **Line Accuracy Engine**: Matches AI issue line numbers against git patch chunk headers (`@@ -L,C +L,C @@`).
+| Feature | SDE-1 Engineering Value | Benefit |
+| :--- | :--- | :--- |
+| **Async Worker Queue** | Asynchronous execution, non-blocking HTTP endpoints | High throughput, zero request timeouts |
+| **Webhook Bot** | Event-driven developer workflow integration | Automatic reviews without manual copying |
+| **Observability** | Telemetry tracking (tokens, model latency, prompt version) | Cost monitoring & model evaluation |
+| **Deduplication Engine** | SHA256 deterministic issue fingerprinting | Zero comment spam on revised commits |
+| **Zod Schema Parsing** | Guaranteed AI output runtime validation | Type-safe database persistence |
 
 ---
 
