@@ -10,11 +10,17 @@
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:ui": "vitest --ui",
     "db:generate": "pnpm --filter db drizzle-kit generate",
     "db:migrate": "pnpm --filter db drizzle-kit migrate"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.12.4"
+  "packageManager": "pnpm@10.12.4",
+  "devDependencies": {
+    "@vitest/ui": "2.1.8",
+    "vitest": "2.1.8"
+  }
 }

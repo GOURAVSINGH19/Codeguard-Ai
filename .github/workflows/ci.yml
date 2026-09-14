@@ -1,0 +1,154 @@
+name: CI
+
+# ─── When does this run? ──────────────────────────────────────────────────────
+on:
+  pull_request:
+    branches: [main, master, develop]   # runs when PR targets these branches
+  push:
+    branches: [main, master]            # also runs on direct push to main
+
+# ─── Cancel in-progress runs on the same PR (saves CI minutes) ───────────────
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Type Check
+  # Runs TypeScript compiler (tsc --noEmit) across all packages.
+  # Catches type errors before tests even run.
+  # ════════════════════════════════════════════════════════════════════════════
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm          # caches node_modules based on pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check — web app
+        run: pnpm --filter web exec tsc --noEmit
+
+      - name: Type check — workers app
+        run: pnpm --filter workers exec tsc --noEmit
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Lint
+  # Runs ESLint on the web app.
+  # Separate job so type check and lint run IN PARALLEL.
+  # ════════════════════════════════════════════════════════════════════════════
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint — web app
+        run: pnpm --filter web lint
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3 — Unit Tests
+  # Runs all 55 Vitest tests across the monorepo.
+  # Runs IN PARALLEL with typecheck and lint — does NOT wait for them.
+  # ════════════════════════════════════════════════════════════════════════════
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+        # No real services needed — all tests use mocks:
+        #   - Groq API → mocked via vi.stubGlobal("fetch")
+        #   - PostgreSQL → mocked via vi.mock("@codeguard/db")
+        #   - OpenAI → mocked EmbeddingService
+        #   - Kafka → not tested at unit level
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 4 — Build Check
+  # Verifies the Next.js app compiles successfully.
+  # Only runs AFTER tests, typecheck, and lint all pass (needs: [...]).
+  # This is the most expensive job so we gate it behind the fast checks.
+  # ════════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [typecheck, lint, test]   # only runs if all 3 above pass
+
+    # Fake env vars needed for Next.js build to succeed without real services
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_placeholder
+      CLERK_SECRET_KEY: sk_test_placeholder
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+      GROQ_API_KEY: placeholder
+      GROQ_MODEL: openai/gpt-oss-120b
+      KAFKA_BROKERS: localhost:19092
+      GITHUB_WEBHOOK_SECRET: placeholder
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build — web app
+        run: pnpm --filter web build
