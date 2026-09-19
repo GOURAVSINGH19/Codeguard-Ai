@@ -45,3 +45,57 @@ export const ReviewCompletedEventSchema = z.object({
 });
 
 export type ReviewCompletedEvent = z.infer<typeof ReviewCompletedEventSchema>;
+
+// ─── GitHub Push Event (raw webhook payload) ───────────────────────────────────
+
+export const GitHubPushEventSchema = z.object({
+  ref: z.string(),
+  before: z.string(),
+  after: z.string(),
+  repository: z.object({
+    id: z.number(),
+    name: z.string(),
+    full_name: z.string(),
+    owner: z.object({
+      login: z.string(),
+    }),
+    clone_url: z.string(),
+    default_branch: z.string(),
+  }),
+  pusher: z.object({
+    name: z.string(),
+    email: z.string().optional(),
+  }),
+  commits: z.array(z.object({
+    id: z.string(),
+    message: z.string(),
+    timestamp: z.string(),
+    author: z.object({
+      name: z.string(),
+      email: z.string(),
+    }),
+    added: z.array(z.string()).optional(),
+    removed: z.array(z.string()).optional(),
+    modified: z.array(z.string()).optional(),
+  })).optional(),
+});
+
+export type GitHubPushEvent = z.infer<typeof GitHubPushEventSchema>;
+
+// ─── codeguard.index.incremental ───────────────────────────────────────────────
+
+export const IndexIncrementalEventSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  repositoryId: z.string().uuid(),
+  /** Files that changed in the push (from commit file lists) */
+  changedFiles: z.array(z.string()),
+  /** Head commit SHA after the push */
+  headSha: z.string(),
+  /** Who pushed */
+  pusher: z.string(),
+  /** ISO timestamp */
+  triggeredAt: z.string().datetime(),
+});
+
+export type IndexIncrementalEvent = z.infer<typeof IndexIncrementalEventSchema>;

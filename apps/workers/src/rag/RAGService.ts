@@ -145,8 +145,9 @@ export class RAGService {
   /**
    * Fetch, chunk, embed, and store a single file.
    * Returns the number of chunks created (0 = skipped).
+   * Public for incremental re-indexing on push events.
    */
-  private async indexFile(
+  async indexFile(
     repositoryId: string,
     owner: string,
     repo: string,
@@ -169,10 +170,12 @@ export class RAGService {
     // Skip binary-looking files
     if (this.isBinary(content)) return 0;
 
-    const chunks = this.chunker.chunk(content);
-    if (chunks.length === 0) return 0;
-
     const language = this.detectLanguage(filePath);
+
+    // Use AST chunking for supported languages, fallback to line-based
+    const strategy = language && CodeChunker.isSupported(language) ? "ast" : "lines";
+    const chunks = await this.chunker.chunk(content, strategy, language ?? undefined);
+    if (chunks.length === 0) return 0;
 
     // Delete existing chunks for this file (re-indexing on push)
     await db

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "@/components/ui/SeverityBadge";
 
 interface Issue {
   id?: string;
@@ -36,6 +37,8 @@ export default function ReviewDetailPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [showCode, setShowCode] = useState<boolean>(false);
 
   useEffect(() => {
     if (!reviewId) return;
@@ -48,67 +51,47 @@ export default function ReviewDetailPage() {
       setError(null);
       const res = await fetch(`/api/reviews/${reviewId}`);
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to fetch review details");
-      }
-
+      if (!res.ok) throw new Error(data.error || "Failed to fetch review details");
       setReview(data.review);
     } catch (err: any) {
-      console.error("Error fetching review detail:", err);
       setError(err.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
   };
 
-  const getSeverityBadge = (severity: string) => {
-    switch (severity?.toLowerCase()) {
-      case "critical":
-        return "bg-rose-500/10 text-rose-400 border-rose-500/30";
-      case "high":
-        return "bg-orange-500/10 text-orange-400 border-orange-500/30";
-      case "medium":
-        return "bg-amber-500/10 text-amber-400 border-amber-500/30";
-      case "low":
-      default:
-        return "bg-blue-500/10 text-blue-400 border-blue-500/30";
-    }
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 8.0) return "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
-    if (score >= 5.0) return "text-amber-400 border-amber-500/30 bg-amber-500/10";
-    return "text-rose-400 border-rose-500/30 bg-rose-500/10";
-  };
-
-  const handleCopySuggestion = (text: string, idx: number) => {
+  const handleCopy = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);
     setCopiedIdx(idx);
     setTimeout(() => setCopiedIdx(null), 2000);
   };
 
+  const handleShareLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    // Brief visual feedback handled inline
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6">
-        <div className="w-10 h-10 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mb-4" />
-        <p className="text-sm font-medium text-zinc-400">Loading review details...</p>
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 gap-4">
+        <div className="w-10 h-10 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+        <p className="text-sm text-zinc-400">Loading review...</p>
       </div>
     );
   }
 
   if (error || !review) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6">
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 max-w-md w-full text-center flex flex-col items-center gap-4">
           <span className="text-4xl">⚠️</span>
           <h2 className="text-lg font-bold text-white">Review Not Found</h2>
-          <p className="text-xs text-zinc-400">{error || "Unable to find the requested review."}</p>
+          <p className="text-xs text-zinc-400">{error || "Unable to find this review."}</p>
           <Link
             href="/"
             className="mt-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition border border-zinc-700"
           >
-            ← Return to Dashboard
+            ← Back to Dashboard
           </Link>
         </div>
       </div>
@@ -116,146 +99,162 @@ export default function ReviewDetailPage() {
   }
 
   const scoreNum = review.score ?? 0;
-  const criticalCount = review.issues.filter((i) => i.severity === "critical").length;
-  const highCount = review.issues.filter((i) => i.severity === "high").length;
-  const mediumCount = review.issues.filter((i) => i.severity === "medium").length;
-  const lowCount = review.issues.filter((i) => i.severity === "low").length;
+  const categories = Array.from(new Set(review.issues.map((i) => i.category)));
+  const filteredIssues = review.issues.filter(
+    (i) => filterCategory === "all" || i.category === filterCategory
+  );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 sm:p-8 font-mono">
-      <div className="max-w-5xl mx-auto flex flex-col gap-8">
-        {/* Navigation Bar */}
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 sm:p-8">
+      <div className="max-w-4xl mx-auto flex flex-col gap-7">
+
+        {/* Nav */}
         <div className="flex items-center justify-between">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-white transition bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-400 hover:text-white transition bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800"
           >
-            <span>←</span> Back to Dashboard
+            ← Dashboard
           </Link>
-          <span className="text-xs text-zinc-500 font-mono">ID: {review.id}</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleShareLink}
+              className="text-[10px] px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600 transition"
+              title="Copy link"
+            >
+              🔗 Copy link
+            </button>
+            <span className="text-[10px] text-zinc-600 font-mono hidden sm:block">
+              {review.id.slice(0, 8)}…
+            </span>
+          </div>
         </div>
 
-        {/* Title & Metadata Card */}
+        {/* Title card */}
         <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold uppercase tracking-wider">
-                {review.language || "code"}
-              </span>
-              <span className="px-2.5 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-medium capitalize">
-                Status: {review.status}
-              </span>
-              {review.reviewType && (
-                <span className="px-2.5 py-0.5 rounded-md bg-zinc-800/80 border border-zinc-800 text-zinc-400 text-xs font-medium">
-                  {review.reviewType.replace("_", " ")}
+          <div className="flex flex-col gap-2.5 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {review.language && (
+                <span className="px-2.5 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-bold uppercase tracking-wider">
+                  {review.language}
                 </span>
               )}
+              <span className="px-2.5 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] font-medium capitalize">
+                {review.status}
+              </span>
+              <span className="px-2.5 py-0.5 rounded-md bg-zinc-800/80 border border-zinc-800 text-zinc-400 text-[10px]">
+                {review.reviewType.replace(/_/g, " ")}
+              </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-              {review.title || `${(review.language || "Code").toUpperCase()} Code Review`}
+            <h1 className="text-xl font-bold text-white">
+              {review.title || `${(review.language || "Code").toUpperCase()} Review`}
             </h1>
             <p className="text-xs text-zinc-400">
-              Reviewed on {new Date(review.createdAt).toLocaleString()}
-              {review.model && ` • Model: ${review.model}`}
+              {new Date(review.createdAt).toLocaleString()}
+              {review.model && <span className="text-zinc-600"> · {review.model}</span>}
             </p>
           </div>
 
-          {/* Score Badge */}
-          <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-zinc-800 pt-4 md:pt-0 md:pl-6">
-            <div className="flex flex-col items-end">
-              <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-400">
-                Quality Score
-              </span>
-              <div
-                className={`text-2xl font-extrabold font-mono px-4 py-1.5 rounded-xl border mt-1 ${getScoreColor(
-                  scoreNum
-                )}`}
-              >
-                {scoreNum.toFixed(1)} / 10
-              </div>
-            </div>
+          {/* Score */}
+          <div className="md:border-l border-zinc-800 md:pl-6 w-full md:w-44 shrink-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Quality Score</p>
+            <ScoreDisplay score={scoreNum} />
           </div>
         </div>
 
-        {/* Executive Summary */}
+        {/* Severity breakdown */}
+        <SeverityCountBar issues={review.issues} />
+
+        {/* Summary */}
         {review.summary && (
-          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
-              <span>📋</span> Executive Summary
+          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-2">
+            <h2 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+              📋 Executive Summary
             </h2>
-            <p className="text-sm text-zinc-300 leading-relaxed font-sans bg-zinc-950/70 p-4 rounded-xl border border-zinc-800/80">
+            <p className="text-sm text-zinc-300 leading-relaxed bg-zinc-950/70 p-4 rounded-xl border border-zinc-800/80">
               {review.summary}
             </p>
           </div>
         )}
 
-        {/* Original Code Snippet (if available) */}
+        {/* Code snippet (collapsible) */}
         {review.codeSnippet && (
-          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
-              <span>📄</span> Submitted Code Snippet
-            </h2>
-            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 overflow-x-auto max-h-72">
-              <pre className="font-mono text-xs text-zinc-200 leading-relaxed whitespace-pre">
-                {review.codeSnippet}
-              </pre>
-            </div>
+          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setShowCode(!showCode)}
+              className="w-full flex items-center justify-between p-5 text-left hover:bg-zinc-800/30 transition"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                📄 Submitted Code
+              </span>
+              <span className="text-zinc-500 text-xs">{showCode ? "▲ Hide" : "▼ Show"}</span>
+            </button>
+            {showCode && (
+              <div className="bg-zinc-950 overflow-x-auto max-h-72 border-t border-zinc-800">
+                <pre className="font-mono text-xs text-zinc-200 leading-relaxed whitespace-pre p-4">
+                  {review.codeSnippet}
+                </pre>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Identified Issues */}
+        {/* Issues */}
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
-              <span>🔍</span> Identified Issues ({review.issues.length})
+              🔍 Issues ({review.issues.length})
             </h2>
-
-            {/* Severity Breakdown Pills */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 font-medium">
-                🔴 Critical: {criticalCount}
-              </span>
-              <span className="text-xs px-2.5 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 font-medium">
-                🟠 High: {highCount}
-              </span>
-              <span className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium">
-                🟡 Medium: {mediumCount}
-              </span>
-              <span className="text-xs px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 font-medium">
-                🔵 Low: {lowCount}
-              </span>
-            </div>
           </div>
 
+          {/* Category filter */}
+          {categories.length > 1 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Filter:</span>
+              <button
+                onClick={() => setFilterCategory("all")}
+                className={`text-[10px] px-2 py-0.5 rounded border transition ${
+                  filterCategory === "all"
+                    ? "bg-zinc-700 text-white border-zinc-600"
+                    : "text-zinc-400 border-zinc-700 hover:text-white"
+                }`}
+              >
+                All ({review.issues.length})
+              </button>
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setFilterCategory(cat)}
+                  className={`text-[10px] px-2 py-0.5 rounded border transition capitalize ${
+                    filterCategory === cat
+                      ? "bg-zinc-700 text-white border-zinc-600"
+                      : "text-zinc-400 border-zinc-700 hover:text-white"
+                  }`}
+                >
+                  {cat} ({review.issues.filter((i) => i.category === cat).length})
+                </button>
+              ))}
+            </div>
+          )}
+
           {review.issues.length === 0 ? (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-8 text-center text-emerald-400 text-sm flex flex-col items-center gap-2">
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-8 text-center text-emerald-400 flex flex-col items-center gap-2">
               <span className="text-3xl">🎉</span>
-              <p className="font-semibold">No issues detected!</p>
-              <p className="text-xs text-emerald-400/80">
-                This code snippet passed all security, performance, and style checks.
-              </p>
+              <p className="font-semibold text-sm">No issues detected!</p>
+              <p className="text-xs text-emerald-400/70">This code passed all checks.</p>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {review.issues.map((issue, idx) => (
+              {filteredIssues.map((issue, idx) => (
                 <div
                   key={issue.id || idx}
-                  className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-5 flex flex-col gap-3 shadow-lg hover:border-zinc-700 transition"
+                  className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-5 flex flex-col gap-3 hover:border-zinc-700 transition"
                 >
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span
-                        className={`text-xs uppercase font-bold px-2.5 py-1 rounded-md border ${getSeverityBadge(
-                          issue.severity
-                        )}`}
-                      >
-                        {issue.severity}
-                      </span>
-                      <span className="text-xs uppercase font-medium text-zinc-300 bg-zinc-800 border border-zinc-700 px-2.5 py-1 rounded-md">
-                        {issue.category}
-                      </span>
+                      <SeverityBadge severity={issue.severity} />
+                      <CategoryBadge category={issue.category} />
                     </div>
-
                     {issue.line !== null && (
                       <span className="text-xs font-mono bg-zinc-950 border border-zinc-800 text-zinc-400 px-3 py-1 rounded-md">
                         Line {issue.line}
@@ -263,19 +262,19 @@ export default function ReviewDetailPage() {
                     )}
                   </div>
 
-                  <p className="text-xs sm:text-sm text-zinc-200 leading-relaxed font-sans">
+                  <p className="text-xs sm:text-sm text-zinc-200 leading-relaxed">
                     {issue.message}
                   </p>
 
                   {issue.suggestion && (
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex flex-col gap-2 mt-1">
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex flex-col gap-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">
                           💡 Suggested Fix
                         </span>
                         <button
-                          onClick={() => handleCopySuggestion(issue.suggestion!, idx)}
-                          className="text-[11px] px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition border border-zinc-700"
+                          onClick={() => handleCopy(issue.suggestion!, idx)}
+                          className="text-[10px] px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition border border-zinc-700"
                         >
                           {copiedIdx === idx ? "✓ Copied" : "Copy Fix"}
                         </button>
@@ -290,6 +289,12 @@ export default function ReviewDetailPage() {
             </div>
           )}
         </div>
+
+        {/* Footer */}
+        <div className="text-[10px] text-zinc-600 text-center pb-4">
+          Review ID: {review.id} · Powered by CodeGuard AI
+        </div>
+
       </div>
     </div>
   );
