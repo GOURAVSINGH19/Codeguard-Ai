@@ -6,9 +6,15 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@codeguard/db": ["../../packages/db/index.ts"],
+      "@codeguard/db/*": ["../../packages/db/*"],
+      "@codeguard/types": ["../../packages/types/src/index.ts"],
+      "@codeguard/types/*": ["../../packages/types/src/*"],
+      "@codeguard/kafka": ["../../packages/kafka/src/index.ts"],
+      "@codeguard/kafka/*": ["../../packages/kafka/src/*"]
+    }
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

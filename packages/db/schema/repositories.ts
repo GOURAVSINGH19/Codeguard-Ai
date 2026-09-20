@@ -20,6 +20,7 @@ export const repositories = pgTable("repositories", {
   language: text("language"),
   description: text("description"),
   status: repositoryStatusEnum("status").default("active").notNull(),
+  autoReviewEnabled: boolean("auto_review_enabled").default(false).notNull(),
   cloneUrl: text("clone_url"),
   htmlUrl: text("html_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -1,254 +1,273 @@
-# 🛡️ CodeGuard AI — Autonomous AI Code Reviewer & PR Bot
+# 🛡️ CodeGuard AI
 
-[![Next.js 16](https://img.shields.io/badge/Next.js-16.x-black?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Turborepo](https://img.shields.io/badge/Turborepo-Monorepo-ef4444?style=flat-square&logo=turborepo)](https://turbo.build/)
-[![Drizzle ORM](https://img.shields.io/badge/Drizzle_ORM-PostgreSQL-c084fc?style=flat-square)](https://orm.drizzle.team/)
-[![Neon Postgres](https://img.shields.io/badge/Neon-pgvector-00e599?style=flat-square&logo=postgresql)](https://neon.tech/)
-[![Clerk Auth](https://img.shields.io/badge/Clerk-GitHub_OAuth-6c47ff?style=flat-square&logo=clerk)](https://clerk.com/)
-[![LLM Engine](https://img.shields.io/badge/LLM-Llama_3.3_70B-orange?style=flat-square&logo=meta)](https://groq.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+An AI-powered code review platform that automatically analyses GitHub Pull Requests
+and code snippets for security vulnerabilities, bugs, performance issues, and
+style problems — powered by Llama 3.3 70B, Kafka, pgvector RAG, dependency graph
+analysis, and a clean service-layer architecture.
 
-> **CodeGuard AI** is an enterprise-grade, event-driven autonomous AI code reviewer and GitHub Pull Request bot built with Next.js 16, Turborepo, Drizzle ORM, Neon PostgreSQL (pgvector), Clerk Auth, Llama 3.3 70B, and Octokit REST API.
+> **Built as an SDE-1 portfolio project** demonstrating: TypeScript monorepo,
+> service-layer design patterns, Kafka event streaming, RAG pipeline, graph
+> algorithms (BFS blast-radius), vector search, and CI/CD.
 
 ---
 
-## 💡 Overview
+## Architecture
 
-CodeGuard AI elevates static code analysis from a simple frontend LLM prompt box into a **production-ready developer tool** that seamlessly integrates into real-world software engineering workflows.
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Browser (Next.js UI)                        │
+│         ReviewerDashboard  ·  PRReviewer  ·  /reviews/[id]         │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ HTTP (fetch)
+┌──────────────────────────────▼──────────────────────────────────────┐
+│                    Next.js API Routes  (thin)                        │
+│  /api/review  /api/reviews  /api/github/review  /api/github/repos   │
+│  /api/github/comment  /api/webhooks/github                          │
+│                                                                      │
+│  Auth: Clerk  ·  Validation: Zod  ·  Zero business logic here       │
+└───┬──────────────────┬────────────────────┬───────────────┬─────────┘
+    │                  │                    │               │
+    ▼                  ▼                    ▼               ▼
+┌───────────┐  ┌───────────────┐  ┌──────────────────┐  ┌──────────────┐
+│   AI      │  │    GitHub     │  │    Review        │  │    User      │
+│  Review   │  │   Service     │  │  Persistence     │  │   Service    │
+│  Service  │  │               │  │    Service       │  │              │
+│           │  │ listRepos()   │  │                  │  │ syncUser()   │
+│ review    │  │ listOpenPRs() │  │ saveSnippet()    │  └──────────────┘
+│ Snippet() │  │ getPRDetail() │  │ ensureRepo()     │
+│ reviewPR  │  │ postComment() │  │ ensurePR()       │
+│ Diff()    │  └───────┬───────┘  │ completePR()     │
+└─────┬─────┘          │          │ getUserReviews()  │
+      │                │          └────────┬──────────┘
+      │ Groq API       │ GitHub API        │ Drizzle ORM
+      ▼                ▼                   ▼
+┌──────────────┐  ┌──────────┐  ┌──────────────────────┐
+│  Groq LLM    │  │  GitHub  │  │   Neon PostgreSQL     │
+│  Llama 3.3   │  │   REST   │  │   + pgvector (RAG)    │
+│  70B via API │  │   API    │  │                        │
+└──────────────┘  └──────────┘  └──────────────────────┘
 
-Instead of requiring developers to manually copy-paste code snippets into a website, CodeGuard AI acts as an **automated GitHub bot**:
+        ─────────── Kafka Event Flow ───────────
 
-- 🤖 **Webhook-Driven**: Triggers automated reviews instantly when a pull request is opened or updated on GitHub.
-- ⚡ **Asynchronous Worker Queue**: Uses background queues to prevent HTTP request timeouts during long-running AI analysis tasks.
-- 💬 **Line-Anchored GitHub Comments**: Automatically posts structured inline code suggestions directly onto GitHub PR files using Octokit REST API.
-- 📊 **AI Observability & Telemetry**: Captures prompt versions, token consumption, model performance, and review duration.
-- 🔁 **Fingerprint Deduplication**: Generates deterministic SHA256 hashes for findings to prevent comment spam across PR revisions.
-
----
-
-## 🏗️ Architecture & Event-Driven Workflow
-
-### High-Level System Architecture
-
-```mermaid
-graph TD
-    subgraph GitHub ["Octokit & GitHub Platform"]
-        PR["Developer Opens / Updates PR"]
-        Webhook["GitHub Webhook Event"]
-        Comments["Inline PR Review Comments"]
-    end
-
-    subgraph API ["Ingestion & Auth Layer"]
-        NextAPI["Next.js App Router API (/api/webhooks/github)"]
-        AuthGuard["Clerk Auth & Scoped Authorization"]
-    end
-
-    subgraph Queue ["Background Job Queue"]
-        RedisQueue["BullMQ / Job Queue"]
-        Worker["Async Review Worker"]
-    end
-
-    subgraph Pipeline ["AI Review & Analysis Engine"]
-        DiffExtract["Octokit Diff Parser"]
-        LLMEngine["Llama 3.3 70B / Groq Engine"]
-        ZodValidator["Zod Output Validator"]
-        Deduplicator["SHA256 Fingerprint Engine"]
-    end
-
-    subgraph Database ["Database & Persistence Layer"]
-        NeonDB[("Neon PostgreSQL + pgvector")]
-        DrizzleORM["Drizzle ORM"]
-    end
-
-    PR --> Webhook
-    Webhook --> NextAPI
-    AuthGuard --> NextAPI
-    NextAPI --> RedisQueue
-    RedisQueue --> Worker
-    Worker --> DiffExtract
-    DiffExtract --> LLMEngine
-    LLMEngine --> ZodValidator
-    ZodValidator --> Deduplicator
-    Deduplicator --> DrizzleORM
-    Deduplicator --> NeonDB
-    Deduplicator --> Comments
+GitHub Webhook ──► POST /api/webhooks/github
+                        │ HMAC SHA-256 verify (timingSafeEqual)
+                        │ save to webhook_events table
+                        │ publish → codeguard.webhook.received
+                        ▼
+              ┌──────────────────────┐
+              │   Kafka / Redpanda   │
+              │                      │
+              │  webhook.received    │
+              │  review.requested    │
+              │  review.completed    │
+              └──────────┬───────────┘
+                         │ consume
+              ┌──────────▼────────────────────────────────┐
+              │               apps/workers                  │
+              │                                             │
+              │  1. webhookProcessor                        │
+              │     filters PR events (opened/synchronize) │
+              │     publishes review.requested              │
+              │                                             │
+              │  2. reviewProcessor                         │
+              │     fetches PR diff from GitHub API         │
+              │                                             │
+              │  3. PRDiffSelector  (graph-aware)           │
+              │     loads code_chunks from DB               │
+              │     builds DependencyGraph                  │
+              │       nodes = files                         │
+              │       edges = import relationships          │
+              │     BFS blast radius from changed files     │
+              │     ranks files by risk score               │
+              │     fills 12k char budget: riskiest first   │
+              │                                             │
+              │  4. RAGService  (vector search)             │
+              │     embeds selected diff → query vector     │
+              │     pgvector cosine search (IVFFlat index)  │
+              │     returns 5 most similar code chunks      │
+              │     injects as "Codebase Context"           │
+              │                                             │
+              │  5. Groq AI call                            │
+              │     system: constraints + RAG context       │
+              │     user: graph-selected diff               │
+              │     → Zod validated ReviewOutput            │
+              │                                             │
+              │  6. Persist to DB + post GitHub comment     │
+              │  7. publish review.completed                │
+              │                                             │
+              │  8. indexRepository (separate job)         │
+              │     chunks + embeds all repo files          │
+              │     stores vectors in code_chunks table     │
+              └─────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🔄 Webhook PR Review Sequence
+## What Makes This Project Different
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as Developer
-    participant GH as GitHub Platform
-    participant Webhook as CodeGuard Webhook Handler
-    participant Queue as Redis / BullMQ Queue
-    participant Worker as Background Worker
-    participant LLM as Llama 3.3 70B Engine
-    participant DB as Neon PostgreSQL DB
+### 1. Graph-Aware Diff Selection
+Instead of blindly truncating the diff at 12,000 characters, the worker builds a
+**dependency graph** from import relationships in the codebase. When a PR changes
+`src/utils/token.ts`, BFS traversal through reverse edges finds every file that
+imports it — `auth.ts` → `middleware.ts` → `routes/api/users.ts`. Those files are
+ranked highest for the AI review budget, so a 1-line change to a widely-imported
+utility scores higher than a 200-line change to an isolated test file.
 
-    Dev->>GH: Open / Update Pull Request
-    GH->>Webhook: POST /api/webhooks/github (pull_request event)
-    Webhook->>DB: Insert Review Record (status: pending)
-    Webhook->>Queue: Enqueue Review Job { reviewId, prId, repoId }
-    Webhook-->>GH: HTTP 202 Accepted (Immediate Response)
-    
-    Queue->>Worker: Consume Job
-    Worker->>GH: Fetch PR Diff (Octokit REST)
-    Worker->>LLM: Stream Diff & Prompt Context
-    LLM-->>Worker: Structured Findings (JSON)
-    Worker->>Worker: Validate Zod Schema & Fingerprint Issues
-    Worker->>DB: Save Telemetry & Issues (status: completed)
-    Worker->>GH: Post Line-Anchored Comments to PR
+```
+Changed: utils/token.ts (+1 line)
+
+BFS blast radius:
+  depth 0: utils/token.ts          ← directly changed
+  depth 1: auth/verifyJWT.ts       ← imports token.ts  (HIGH RISK)
+  depth 1: middleware/csrf.ts      ← imports token.ts  (HIGH RISK)
+  depth 2: routes/api/users.ts     ← imports verifyJWT (MEDIUM RISK)
+  depth 3: app.ts                  ← (excluded, budget full)
+
+Unrelated: components/Button.tsx   ← NEVER included
 ```
 
+### 2. RAG-Augmented Reviews
+The AI doesn't just see the diff — it sees **similar code from the actual
+repository** via pgvector semantic search. The PR diff is embedded to a vector,
+and the 5 nearest-neighbour code chunks are injected into the prompt as context.
+The LLM can now say "this conflicts with the existing pattern in `src/auth/utils.ts`"
+rather than just "consider using parameterized queries."
+
+### 3. Zod as the AI Trust Boundary
+Every Groq response is parsed through `ReviewOutputSchema` before touching the DB.
+If the model hallucinates `severity: "catastrophic"` or `score: 99`, the validation
+fails cleanly — no corrupt data persists, the review status is marked `"failed"`.
+
+### 4. Service Layer Architecture
+All business logic was extracted from fat route handlers into four dedicated service
+classes. God-object score went from 90% → 30%. Every API route is ≤20 lines:
+parse → auth check → one service call → return response.
+
 ---
 
-## ⭐ Production-Grade Engineering Pillars
+## Tech Stack
 
-### 1. ⚡ Asynchronous Background Processing
-HTTP requests never block waiting for an LLM response. 
-- **Immediate Response**: Webhook handlers respond with `HTTP 202 Accepted` within 100ms.
-- **Worker Isolation**: Long-running diff extraction, AI inference, and comment posting happen in background worker threads.
-- **Status State Machine**: Reviews transition reliably through state phases (`pending` $\rightarrow$ `completed` / `failed`).
+| Layer | Technology | Why |
+|---|---|---|
+| Frontend | Next.js 16 App Router, React 19, Tailwind v4 | SSR + collocated API routes |
+| Auth | Clerk (GitHub OAuth) | GitHub token access without storing creds |
+| API | Next.js Route Handlers + Zod | Type-safe REST, validated I/O |
+| Service Layer | TypeScript classes | Separation of concerns, testability |
+| AI Reviews | Groq API (Llama 3.3 70B) | 5–10x faster than OpenAI, free tier |
+| RAG Embeddings | OpenAI text-embedding-3-small | 1536-dim vectors, best quality/cost |
+| Vector Search | pgvector (Neon PostgreSQL) | No separate vector DB needed |
+| Graph Analysis | Custom BFS DependencyGraph | Blast-radius aware diff selection |
+| Message Queue | Kafka (Redpanda local, Upstash prod) | Async webhook processing |
+| Database | Neon PostgreSQL + Drizzle ORM | Serverless Postgres, type-safe |
+| GitHub API | Octokit v5 | PR diff fetch, inline comment posting |
+| Tests | Vitest (71 tests) | Fast, ESM-native |
+| CI/CD | GitHub Actions | Parallel type check + lint + test + build |
+| Monorepo | pnpm workspaces | Shared packages, zero duplication |
 
-### 2. 🤖 Webhook-Based Automatic Reviews
-Seamless automated pull request checks triggered directly from GitHub:
-- Listens for `pull_request.opened` and `pull_request.synchronize` events.
-- Extracts changed files, unified diff patches, and additions/deletions.
-- Direct inline comment integration on specific modified lines in GitHub PRs.
+---
 
-### 3. 📊 AI Observability & Performance Telemetry
-Exposes critical operational metrics for monitoring AI behavior and cost:
+## Project Structure
 
-```json
-{
-  "model": "llama-3.3-70b-versatile",
-  "promptVersion": "v2.1",
-  "durationMs": 12450,
-  "filesReviewed": 7,
-  "linesReviewed": 340,
-  "issuesFound": 4,
-  "tokenUsage": {
-    "promptTokens": 1420,
-    "completionTokens": 380,
-    "totalTokens": 1800
-  }
-}
 ```
-
-### 4. 🔁 Fingerprint-Based Comment Deduplication
-Prevents re-posting identical comments when developers push new commits to an open PR:
-
-$$\text{Issue Fingerprint} = \text{SHA256}(\text{repository} + \text{pr} + \text{file} + \text{line} + \text{category} + \text{issueHash})$$
-
-- Checks existing issue fingerprints stored in Neon DB before posting.
-- Skips duplicate issues automatically to keep PR code review threads clean.
-
-### 5. 🛡️ API Hardening & Security
-- **Strict Authorization Scoping**: Enforces tenant security (`review.userId === currentUser.id`).
-- **Validation**: Runtime Zod schema enforcement on incoming API payloads and LLM outputs.
-- **Line Accuracy Engine**: Matches AI issue line numbers against git patch chunk headers (`@@ -L,C +L,C @@`).
-
----
-
-## 🛠️ Monorepo Tech Stack
-
-| Domain | Technology | Description |
-| :--- | :--- | :--- |
-| **Monorepo** | **Turborepo** + **pnpm Workspaces** | High-performance build system and package management |
-| **Frontend** | **Next.js 16 (App Router)** + **React 19** | Modern server/client architecture with Tailwind CSS |
-| **Authentication** | **Clerk Auth** + **GitHub OAuth2** | Enterprise single sign-on and token delegation |
-| **Database** | **Neon PostgreSQL** + **Drizzle ORM** | Serverless relational database with `pgvector` support |
-| **AI Infrastructure** | **Llama 3.3 70B** via **Groq API** | High-speed, structured JSON schema code analysis |
-| **GitHub REST API** | **Octokit Client (`octokit`)** | Repository, PR diff extraction, and comment creation |
-| **Job Queue** | **BullMQ / Redis Worker** | Reliable background job execution |
-
----
-
-## 📁 Repository Structure
-
-```text
 codeguard-ai/
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # Parallel CI: typecheck + lint + test + build
 ├── apps/
-│   ├── web/                         # Next.js 16 Web Dashboard & Webhook APIs
-│   │   ├── src/app/
-│   │   │   ├── api/
-│   │   │   │   ├── github/          # PR list, diff extraction, comment endpoints
-│   │   │   │   ├── review/          # Code review submission endpoint
-│   │   │   │   ├── reviews/         # History & /reviews/[id] detail handlers
-│   │   │   │   └── webhooks/        # GitHub webhook listener
-│   │   │   └── reviews/[id]/        # Dynamic review analysis page
-│   │   ├── src/components/          # PRReviewer & ReviewerDashboard components
-│   │   └── src/lib/                 # Octokit helper & user synchronization
-│   └── workers/                     # Asynchronous Job Consumer & Queue Processor
-├── packages/
-│   ├── db/                          # Drizzle ORM schemas (users, repos, prs, reviews)
-│   ├── types/                       # Shared TypeScript interfaces & Zod schemas
-│   └── config/                      # Environment & shared configuration
-├── docker-compose.yml               # Local development Postgres & Redis
-└── pnpm-workspace.yaml              # Monorepo workspaces definition
+│   ├── web/                    # Next.js frontend + API routes
+│   │   └── src/
+│   │       ├── app/api/        # Thin route handlers (auth + delegate only)
+│   │       │   ├── review/     # Snippet review
+│   │       │   ├── reviews/    # History + detail
+│   │       │   ├── github/     # Repos, PRs, review, comment
+│   │       │   └── webhooks/   # GitHub webhook receiver (HMAC verified)
+│   │       ├── services/       # Business logic
+│   │       │   ├── AIReviewService.ts      # Groq prompts + Zod validation
+│   │       │   ├── GitHubService.ts        # All Octokit calls
+│   │       │   ├── ReviewPersistenceService.ts  # All DB reads/writes
+│   │       │   └── UserService.ts          # Clerk→Neon user sync
+│   │       └── components/     # ReviewerDashboard, PRReviewer
+│   └── workers/                # Kafka consumer workers
+│       └── src/
+│           ├── ai/
+│           │   └── EmbeddingService.ts     # OpenAI text-embedding-3-small
+│           ├── analyzers/
+│           │   ├── CodeChunker.ts          # Sliding window file splitter
+│           │   ├── DependencyGraph.ts      # BFS import graph
+│           │   ├── ImportExtractor.ts      # Regex import parser
+│           │   └── PRDiffSelector.ts       # Graph-aware diff budget selector
+│           ├── jobs/
+│           │   ├── webhookProcessor.ts     # webhook.received → review.requested
+│           │   ├── reviewProcessor.ts      # review.requested → AI → DB → GitHub
+│           │   └── indexRepository.ts      # Bulk embed all repo files
+│           ├── queue/
+│           │   └── kafkaClient.ts          # Producer/consumer management
+│           └── rag/
+│               └── RAGService.ts           # pgvector similarity search
+└── packages/
+    ├── db/                     # Drizzle schema (8 tables), migrations, Neon client
+    ├── types/                  # Shared Zod schemas (ReviewInput/Output)
+    └── kafka/                  # Topic names, event schemas, KafkaJS client
 ```
 
 ---
 
-## 🚦 Roadmap & Engineering Milestones
+## Key Engineering Decisions
 
-- [x] **Phase 1: Foundation & Authentication**
-  - Clerk GitHub OAuth authentication
-  - Monorepo workspace configuration (Next.js 16 + Turborepo)
-- [x] **Phase 2: Database & Core Review Engine**
-  - Drizzle ORM integration with Neon PostgreSQL (`pgvector`)
-  - Llama 3.3 70B AI review engine with structured Zod output
-  - Dynamic Review Detail Dashboard (`/reviews/[id]`)
-- [x] **Phase 3: GitHub PR Integration & Hardening**
-  - Scoped user authorization & API error validation
-  - GitHub repository & PR selection
-  - Octokit PR diff extraction & inline comment creation
-- [ ] **Phase 4: Webhooks & Async Workers (Active Milestone)**
-  - GitHub Webhook endpoint (`POST /api/webhooks/github`)
-  - BullMQ + Redis background job queue
-- [ ] **Phase 5: Quality Controls & Deduplication**
-  - AI Observability telemetry logging
-  - SHA256 issue fingerprint deduplication engine
-- [ ] **Phase 6: Testing & CI/CD**
-  - Unit tests (diff parser, issue parser, fingerprinting)
-  - Integration & E2E pipeline with GitHub Actions
+**1. Service layer over fat route handlers**
+Before: every route handler owned auth, AI calls, DB writes, and GitHub API calls
+in one function (90% god-object score). After: four service classes, each with a
+single responsibility. Evolvability cost dropped from 3.1 to 1.3 components per
+new feature. See [`architecture_selection.md`](.kiro/specs/codeguard-ai-high-level-architecture/architecture_selection.md).
+
+**2. Graph-aware diff selection over naive truncation**
+The old approach: `.slice(0, 12_000)` — random cut, often mid-function.
+The new approach: `DependencyGraph` + BFS blast radius → `PRDiffSelector` fills
+the budget with complete file patches in risk order. A 1-line change to a
+widely-imported file scores higher than a 200-line isolated change.
+
+**3. Kafka for async webhook processing**
+GitHub webhooks return 200 immediately while the worker processes independently.
+Webhook delivery is never blocked by 2–8 second AI latency. Kafka's consumer
+groups allow future services (notifications, analytics) to react to the same
+events without changing the producer.
+
+**4. RAG for codebase-aware reviews**
+Without RAG, the AI sees only the diff. With RAG, it sees semantically similar
+code from the actual repository (pgvector cosine search). This enables
+repo-specific feedback rather than generic best-practice suggestions.
+
+**5. Zod as the AI trust boundary**
+Everything from Groq is untrusted until `ReviewOutputSchema.parse()` succeeds.
+Prevents corrupt enum values, out-of-range scores, and missing required fields
+from reaching the database.
 
 ---
 
-## ⚡ Quick Start & Development Setup
+## Getting Started
 
-### 1. Prerequisites
-- **Node.js**: `v20.x` or higher
-- **pnpm**: `v10.x` (`npm i -g pnpm`)
-- **Docker**: (Optional, for local Redis/Postgres)
+### Prerequisites
+- Node.js 20+, pnpm 10+
+- Docker Desktop (for Redpanda + Redis)
+- Clerk account (free) — [clerk.com](https://clerk.com)
+- Neon PostgreSQL database (free) — [neon.tech](https://neon.tech)
+- Groq API key (free) — [console.groq.com](https://console.groq.com)
+- OpenAI API key (for embeddings) — [platform.openai.com](https://platform.openai.com)
 
-### 2. Installation
+### 1. Clone and install
 ```bash
-# Clone repository
-git clone https://github.com/GOURAVSINGH19/Codeguard-Ai.git
-cd Codeguard-Ai
-
-# Install workspace dependencies
+git clone https://github.com/your-username/codeguard-ai
+cd codeguard-ai
 pnpm install
 ```
 
-### 3. Environment Configuration
-Create an `.env` file inside `apps/web/.env`:
+### 2. Configure environment variables
 
+**`apps/web/.env`**
 ```env
-# Clerk Auth Keys
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
-
-# Neon PostgreSQL Database
-DATABASE_URL="postgresql://user:pass@ep-cool-db.neon.tech/neondb?sslmode=require"
-
-# AI Engine Credentials
+DATABASE_URL=postgresql://...
 GROQ_API_KEY=gsk_...
 GROQ_MODEL= ---
 
@@ -256,20 +275,82 @@ GROQ_MODEL= ---
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 ```
 
-### 4. Database Migrations
-```bash
-pnpm --filter @codeguard/db db:push
+**`apps/workers/.env`**
+```env
+DATABASE_URL=postgresql://...
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-120b
+OPENAI_API_KEY=sk-...
+GITHUB_TOKEN=ghp_...
+KAFKA_BROKERS=localhost:19092
 ```
 
-### 5. Run Development Server
+### 3. Start infrastructure
 ```bash
-pnpm run dev
+docker-compose up -d
+# Redpanda Console UI → http://localhost:8080
+# Topics created automatically on first message
 ```
 
-Visit `http://localhost:3000` to access the application dashboard.
+### 4. Run database migrations
+```bash
+pnpm db:migrate
+# Also run in Neon SQL console:
+# CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+### 5. Start development servers
+```bash
+# Terminal 1 — Next.js web app
+pnpm dev:web          # http://localhost:3000
+
+# Terminal 2 — Kafka workers
+pnpm dev:worker       # starts webhookProcessor + reviewProcessor
+```
+
+### 6. Run tests
+```bash
+pnpm test             # 71 tests, ~2 seconds
+```
 
 ---
 
-## 📄 License
+## CI/CD Pipeline
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+Every PR triggers four parallel GitHub Actions jobs:
+
+```
+PR opened
+    │
+    ├── Type Check (tsc --noEmit)     ~45s  ┐
+    ├── Lint (eslint)                 ~22s  ├── run in PARALLEL
+    └── Unit Tests (vitest run)       ~18s  ┘
+                    │
+                    └── all pass → Build (next build)   ~2min
+```
+
+The build only runs if type check + lint + tests all pass — saving CI minutes
+when there's a type error or failing test.
+
+---
+
+## Test Coverage
+
+| Suite | Tests | What's covered |
+|---|---|---|
+| `packages/types` | 23 | Zod schemas — all enum values, boundary scores, required fields |
+| `services/AIReviewService` | 10 | HTTP errors, empty responses, invalid JSON, diff truncation, env guard |
+| `workers/CodeChunker` | 12 | Sliding window, overlap, line ranges, empty files |
+| `workers/RAGService` | 10 | Context formatting, embedding calls, DB mock interaction |
+| `workers/DependencyGraph` | 16 | BFS depth, reverse edges, blast radius, multi-file changes, ranking |
+| **Total** | **71** | |
+
+---
+
+## What I Would Add With More Time
+
+- **GitHub App installation flow** — org-wide auto-reviews without per-user OAuth setup
+- **Incremental re-indexing** — re-embed only files changed in each push commit
+- **AST-aware chunking** — split at function/class boundaries instead of fixed line count
+- **Review trend dashboard** — quality score over time per repository
+- **Self-hosted deploy** — Docker Compose with local Ollama instead of Groq

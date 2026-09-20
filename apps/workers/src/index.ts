@@ -1,5 +1,4 @@
-<<<<<<< Updated upstream
-=======
+
 import "dotenv/config";
 import { startWebhookProcessor } from "./jobs/webhookProcessor.js";
 import { startReviewProcessor } from "./jobs/reviewProcessor.js";
@@ -51,4 +50,4 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 main();
->>>>>>> Stashed changes
+

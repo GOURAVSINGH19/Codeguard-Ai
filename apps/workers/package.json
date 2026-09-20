@@ -15,11 +15,21 @@
   "license": "ISC",
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
-    "bullmq": "^6.3.4",
+    "@codeguard/db": "workspace:*",
+    "@codeguard/kafka": "workspace:*",
+    "@codeguard/types": "workspace:*",
     "dotenv": "^17.4.2",
-    "ioredis": "^6.0.0",
+    "drizzle-orm": "^0.45.2",
+    "kafkajs": "^2.2.4",
     "octokit": "^5.0.5",
     "openai": "^7.15.0",
+    "web-tree-sitter": "^0.24.0",
+    "tree-sitter-typescript": "*",
+    "tree-sitter-python": "*",
+    "tree-sitter-go": "*",
+    "tree-sitter-rust": "*",
+    "tree-sitter-java": "*",
+    "tree-sitter-cpp": "*",
     "zod": "^4.6.2"
   },
   "devDependencies": {
