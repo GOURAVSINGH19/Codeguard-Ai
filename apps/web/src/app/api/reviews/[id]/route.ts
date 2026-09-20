@@ -1,11 +1,10 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db, reviews, reviewComments } from "@codeguard/db";
-import { eq, and } from "drizzle-orm";
 import { UuidSchema } from "@codeguard/types";
+import { ReviewPersistenceService } from "@/services";
 
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -14,49 +13,25 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const resolvedParams = await params;
-    const reviewId = resolvedParams.id;
-
-    const uuidValidation = UuidSchema.safeParse(reviewId);
-    if (!uuidValidation.success) {
+    const { id: reviewId } = await params;
+    const uuidCheck = UuidSchema.safeParse(reviewId);
+    if (!uuidCheck.success) {
       return NextResponse.json(
         { error: "Invalid review ID format (must be a valid UUID)" },
         { status: 400 }
       );
     }
 
-    const [review] = await db
-      .select()
-      .from(reviews)
-      .where(and(eq(reviews.id, reviewId), eq(reviews.userId, userId)))
-      .limit(1);
+    const persistence = new ReviewPersistenceService();
+    const review = await persistence.getReviewById(reviewId, userId);
 
     if (!review) {
       return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
 
-    const comments = await db
-      .select()
-      .from(reviewComments)
-      .where(eq(reviewComments.reviewId, review.id));
-
-    const issues = comments.map((c) => ({
-      id: c.id,
-      severity: c.severity,
-      category: c.category,
-      line: c.lineNumber ?? null,
-      message: c.body || c.comment || "",
-      suggestion: c.suggestion ?? null,
-    }));
-
-    return NextResponse.json({
-      review: {
-        ...review,
-        issues,
-      },
-    });
+    return NextResponse.json({ review });
   } catch (error: any) {
-    console.error("Error fetching review detail:", error);
+    console.error("[GET /api/reviews/[id]]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

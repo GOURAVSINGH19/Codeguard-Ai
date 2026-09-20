@@ -1,8 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db, reviews, reviewComments } from "@codeguard/db";
-import { eq, desc } from "drizzle-orm";
-import { syncUserWithDb } from "@/lib/user-sync";
+import { ReviewPersistenceService, UserService } from "@/services";
 
 export async function GET() {
   try {
@@ -11,39 +9,15 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Automatically sync signed in Clerk user to Neon Postgres DB
-    await syncUserWithDb();
+    // Sync Clerk user into DB on every authenticated list request
+    await new UserService().syncCurrentUser();
 
-    const userReviews = await db
-      .select()
-      .from(reviews)
-      .where(eq(reviews.userId, userId))
-      .orderBy(desc(reviews.createdAt))
-      .limit(20);
+    const persistence = new ReviewPersistenceService();
+    const userReviews = await persistence.getUserReviews(userId);
 
-    const reviewsWithIssues = await Promise.all(
-      userReviews.map(async (rev) => {
-        const comments = await db
-          .select()
-          .from(reviewComments)
-          .where(eq(reviewComments.reviewId, rev.id));
-
-        return {
-          ...rev,
-          issues: comments.map((c) => ({
-            severity: c.severity,
-            category: c.category,
-            line: c.lineNumber ?? null,
-            message: c.body || c.comment || "",
-            suggestion: c.suggestion ?? null,
-          })),
-        };
-      })
-    );
-
-    return NextResponse.json({ reviews: reviewsWithIssues });
+    return NextResponse.json({ reviews: userReviews });
   } catch (error: any) {
-    console.error("Error fetching reviews:", error);
+    console.error("[GET /api/reviews]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
