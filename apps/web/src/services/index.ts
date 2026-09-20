@@ -1,5 +1,6 @@
 export { AIReviewService } from "./AIReviewService";
 export { GitHubService } from "./GitHubService";
+export { GitHubAppService } from "./GitHubAppService";
 export { ReviewPersistenceService } from "./ReviewPersistenceService";
 export { UserService } from "./UserService";
 
@@ -10,6 +11,12 @@ export type {
   GitHubPRFile,
   PostCommentResult,
 } from "./GitHubService";
+
+export type {
+  GitHubAppConfig,
+  InstallationToken,
+  AppInstallation,
+} from "./GitHubAppService";
 
 export type {
   SnippetReviewInput,

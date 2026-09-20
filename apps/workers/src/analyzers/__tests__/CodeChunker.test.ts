@@ -16,41 +16,41 @@ function makeLines(n: number): string {
 describe("CodeChunker", () => {
 
   describe("chunk()", () => {
-    it("returns a single chunk for a file under CHUNK_SIZE lines", () => {
+    it("returns a single chunk for a file under CHUNK_SIZE lines", async () => {
       const content = makeLines(30);
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       expect(chunks).toHaveLength(1);
       expect(chunks[0].startLine).toBe(1);
       expect(chunks[0].endLine).toBe(30);
     });
 
-    it("returns multiple chunks for a file over CHUNK_SIZE lines", () => {
+    it("returns multiple chunks for a file over CHUNK_SIZE lines", async () => {
       const content = makeLines(200);
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       expect(chunks.length).toBeGreaterThan(1);
     });
 
-    it("first chunk always starts at line 1", () => {
+    it("first chunk always starts at line 1", async () => {
       const content = makeLines(150);
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       expect(chunks[0].startLine).toBe(1);
     });
 
-    it("last chunk endLine is <= total line count", () => {
+    it("last chunk endLine is <= total line count", async () => {
       const lineCount = 150;
       const content = makeLines(lineCount);
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
       const lastChunk = chunks[chunks.length - 1];
 
       expect(lastChunk.endLine).toBeLessThanOrEqual(lineCount);
     });
 
-    it("chunks have overlapping line ranges (sliding window)", () => {
+    it("chunks have overlapping line ranges (sliding window)", async () => {
       const content = makeLines(200);
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       // Each subsequent chunk's startLine should be LESS than previous endLine
       for (let i = 1; i < chunks.length; i++) {
@@ -58,19 +58,19 @@ describe("CodeChunker", () => {
       }
     });
 
-    it("skips chunks with fewer than 3 non-empty lines", () => {
+    it("skips chunks with fewer than 3 non-empty lines", async () => {
       // Only 2 real lines + lots of blanks
       const content = "const a = 1;\n\n\n\n\n\n\nconst b = 2;";
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       // This should be skipped (< 3 non-empty lines)
       expect(chunks).toHaveLength(0);
     });
 
-    it("each chunk's content matches the line range", () => {
+    it("each chunk's content matches the line range", async () => {
       const content = makeLines(100);
       const lines = content.split("\n");
-      const chunks = chunker.chunk(content);
+      const chunks = await chunker.chunk(content);
 
       for (const chunk of chunks) {
         const expectedContent = lines
@@ -80,13 +80,13 @@ describe("CodeChunker", () => {
       }
     });
 
-    it("returns empty array for empty file", () => {
-      const chunks = chunker.chunk("");
+    it("returns empty array for empty file", async () => {
+      const chunks = await chunker.chunk("");
       expect(chunks).toHaveLength(0);
     });
 
-    it("returns empty array for whitespace-only file", () => {
-      const chunks = chunker.chunk("   \n\n   \n\n");
+    it("returns empty array for whitespace-only file", async () => {
+      const chunks = await chunker.chunk("   \n\n   \n\n");
       expect(chunks).toHaveLength(0);
     });
   });
