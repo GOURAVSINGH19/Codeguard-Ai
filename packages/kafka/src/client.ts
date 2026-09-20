@@ -34,7 +34,13 @@ export function getKafka(): Kafka {
     // If credentials are present, enable SASL/SCRAM (required for cloud Kafka like Upstash or Aiven)
     ...(username && password
       ? {
-        ssl: process.env.KAFKA_SSL === "false" ? false : true,
+        ssl:
+          process.env.KAFKA_SSL === "false"
+            ? false
+            : {
+                rejectUnauthorized:
+                  process.env.KAFKA_SSL_REJECT_UNAUTHORIZED === "true",
+              },
         sasl: {
           mechanism: (process.env.KAFKA_SASL_MECHANISM?.trim() as any) || "scram-sha-256",
           username,
@@ -77,4 +83,36 @@ export async function createConsumer(groupId: string): Promise<Consumer> {
   });
   await consumer.connect();
   return consumer;
+}
+
+/**
+ * Ensures all required CodeGuard Kafka topics exist in the broker.
+ * Automatically creates them if they do not exist yet.
+ */
+export async function ensureTopicsExist(): Promise<void> {
+  const kafka = getKafka();
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    const existingTopics = await admin.listTopics();
+    const { TOPICS } = await import("./topics.js");
+    const topicsToCreate = Object.values(TOPICS).filter(
+      (topic) => !existingTopics.includes(topic)
+    );
+
+    if (topicsToCreate.length > 0) {
+      console.log(`[kafka] Auto-creating missing topics: ${topicsToCreate.join(", ")}`);
+      await admin.createTopics({
+        topics: topicsToCreate.map((topic) => ({
+          topic,
+          numPartitions: 1,
+          replicationFactor: 1,
+        })),
+      });
+    }
+  } catch (err) {
+    console.warn("[kafka] Topic check warning:", (err as Error).message);
+  } finally {
+    await admin.disconnect().catch(() => {});
+  }
 }

@@ -1,4 +1,4 @@
-export { getKafka, createProducer, createConsumer } from "./client";
+export { getKafka, createProducer, createConsumer, ensureTopicsExist } from "./client";
 export { TOPICS } from "./topics";
 export type { TopicName } from "./topics";
 export {

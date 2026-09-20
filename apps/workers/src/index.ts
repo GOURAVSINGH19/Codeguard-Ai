@@ -1,5 +1,6 @@
 
 import "dotenv/config";
+import { ensureTopicsExist } from "@codeguard/kafka";
 import { startWebhookProcessor } from "./jobs/webhookProcessor.js";
 import { startReviewProcessor } from "./jobs/reviewProcessor.js";
 import { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
@@ -15,6 +16,10 @@ export { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
  * Each processor runs an infinite consumer loop — they do not resolve.
  */
 async function main() {
+  await ensureTopicsExist().catch((err) => {
+    console.warn("[main] Could not ensure Kafka topics exist:", err);
+  });
+
   await Promise.all([
     startWebhookProcessor().catch((err) => {
       console.error("[main] webhookProcessor crashed:", err);
