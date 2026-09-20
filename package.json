@@ -21,6 +21,7 @@
   "packageManager": "pnpm@10.12.4",
   "devDependencies": {
     "@vitest/ui": "2.1.8",
+    "next": "16.3.5",
     "vitest": "2.1.8"
   }
 }

@@ -5,9 +5,13 @@ export {
   WebhookReceivedEventSchema,
   ReviewRequestedEventSchema,
   ReviewCompletedEventSchema,
+  GitHubPushEventSchema,
+  IndexIncrementalEventSchema,
 } from "./schemas";
 export type {
   WebhookReceivedEvent,
   ReviewRequestedEvent,
   ReviewCompletedEvent,
+  GitHubPushEvent,
+  IndexIncrementalEvent,
 } from "./schemas";

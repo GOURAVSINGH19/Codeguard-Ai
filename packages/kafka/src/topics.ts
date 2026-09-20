@@ -29,6 +29,14 @@ export const TOPICS = {
    * Payload: { reviewId, prNumber, score, issueCount, userId }
    */
   REVIEW_COMPLETED: "codeguard.review.completed",
+
+  /**
+   * Published by: webhookProcessor (on push events to indexed repos)
+   * Consumed by:  incrementalIndexer worker
+   *
+   * Payload: { owner, repo, repositoryId, changedFiles, headSha, pusher }
+   */
+  INDEX_INCREMENTAL: "codeguard.index.incremental",
 } as const;
 
 export type TopicName = (typeof TOPICS)[keyof typeof TOPICS];

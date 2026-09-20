@@ -14,11 +14,8 @@ const nextConfig: NextConfig = {
     "@codeguard/config",
   ],
 
-  // Silence the Vercel/Next.js warning about missing env vars at build time.
-  // These are validated at runtime by each service that needs them.
-  experimental: {
-    serverComponentsExternalPackages: ["@neondatabase/serverless"],
-  },
+  // Ensure node/server dependencies are loaded properly in serverless environments
+  serverExternalPackages: ["@neondatabase/serverless"],
 };
 
 export default nextConfig;
