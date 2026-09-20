@@ -11,11 +11,11 @@ export async function POST(req: Request) {
 
   // Verify signature
   const signatureHeader = req.headers.get("x-hub-signature-256");
-  const webhookSecret = process.env.GITHUB_APP_WEBHOOK_SECRET;
+  const webhookSecret = process.env.GITHUB_APP_WEBHOOK_SECRET || process.env.GITHUB_WEBHOOK_SECRET;
 
   if (!webhookSecret) {
-    console.warn("[github-app-webhook] GITHUB_APP_WEBHOOK_SECRET not set");
-    return NextResponse.json({ error: "Not configured" }, { status: 500 });
+    console.warn("[github-app-webhook] GITHUB_APP_WEBHOOK_SECRET / GITHUB_WEBHOOK_SECRET not set");
+    return NextResponse.json({ error: "Not configured. Please add GITHUB_APP_WEBHOOK_SECRET in Vercel environment variables." }, { status: 500 });
   }
 
   if (!signatureHeader) {

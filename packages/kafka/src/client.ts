@@ -2,35 +2,38 @@ import { Kafka, type Producer, type Consumer, logLevel } from "kafkajs";
 
 let kafkaInstance: Kafka | null = null;
 
-/**
- * Returns a singleton Kafka instance.
- * Reads broker config from environment variables:
- *
- *   KAFKA_BROKERS  — comma-separated list, e.g. "localhost:19092"
- *                    Defaults to "localhost:19092" for local Redpanda dev.
- *
- * For Upstash Kafka (production), set:
- *   KAFKA_BROKERS=<upstash-endpoint>:9092
- *   KAFKA_USERNAME=<upstash-username>
- *   KAFKA_PASSWORD=<upstash-password>
- */
 export function getKafka(): Kafka {
   if (kafkaInstance) return kafkaInstance;
 
-  const brokers = (process.env.KAFKA_BROKERS ?? "localhost:19092")
-    .split(",")
-    .map((b) => b.trim());
+  let brokers: string[] = [];
 
-  const username = process.env.KAFKA_USERNAME;
-  const password = process.env.KAFKA_PASSWORD;
+  if (process.env.KAFKA_BROKERS) {
+    brokers = process.env.KAFKA_BROKERS.split(",")
+      .map((b) => b.trim())
+      .filter(Boolean);
+  } else if (process.env.KAFKA_HOST) {
+    const host = process.env.KAFKA_HOST.trim();
+    const port = process.env.KAFKA_PORT ? process.env.KAFKA_PORT.trim() : "9092";
+    brokers = [`${host}:${port}`];
+  } else {
+    brokers = ["localhost:19092"];
+  }
+
+  const username = process.env.KAFKA_USERNAME?.trim();
+  const password = process.env.KAFKA_PASSWORD?.trim();
 
   kafkaInstance = new Kafka({
     clientId: "codeguard-ai",
     brokers,
-    // If credentials are present, enable SASL/SCRAM (required for Upstash)
+    // If credentials are present, enable SASL/SCRAM (required for cloud Kafka like Upstash or Aiven)
     ...(username && password
       ? {
-        ssl: false,
+        ssl: process.env.KAFKA_SSL === "false" ? false : true,
+        sasl: {
+          mechanism: (process.env.KAFKA_SASL_MECHANISM?.trim() as any) || "scram-sha-256",
+          username,
+          password,
+        },
       }
       : {}),
     // Keep logs quiet in production; use DEBUG in dev via LOG_LEVEL env
