@@ -25,11 +25,11 @@ WORKDIR /app
 RUN npm install -g pnpm@10.12.4
 
 # Copy node_modules from deps stage
-COPY --from=deps /app/node_modules        ./node_modules
-COPY --from=deps /app/packages/db/node_modules      ./packages/db/node_modules
-COPY --from=deps /app/packages/kafka/node_modules   ./packages/kafka/node_modules
-COPY --from=deps /app/packages/types/node_modules   ./packages/types/node_modules
-COPY --from=deps /app/apps/workers/node_modules     ./apps/workers/node_modules
+# COPY --from=deps /app/node_modules        ./node_modules
+# COPY --from=deps /app/packages/db/node_modules      ./packages/db/node_modules
+# COPY --from=deps /app/packages/kafka/node_modules   ./packages/kafka/node_modules
+# COPY --from=deps /app/packages/types/node_modules   ./packages/types/node_modules
+# COPY --from=deps /app/apps/workers/node_modules     ./apps/workers/node_modules
 
 # Copy workspace manifests
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
