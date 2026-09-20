@@ -25,6 +25,12 @@ export function getKafka(): Kafka {
   kafkaInstance = new Kafka({
     clientId: "codeguard-ai",
     brokers,
+    connectionTimeout: 4000,
+    requestTimeout: 6000,
+    retry: {
+      retries: 2,
+      initialRetryTime: 300,
+    },
     // If credentials are present, enable SASL/SCRAM (required for cloud Kafka like Upstash or Aiven)
     ...(username && password
       ? {

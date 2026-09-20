@@ -233,7 +233,7 @@ async function markWebhookStatus(
       processedAt: status === "processed" ? new Date() : undefined,
     })
     .where(eq(webhookEvents.githubDeliveryId, deliveryId))
-    .catch((err) =>
+    .catch((err: any) =>
       console.warn("[webhookProcessor] Could not update webhook status:", err)
     );
 }
