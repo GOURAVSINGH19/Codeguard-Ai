@@ -2,14 +2,11 @@ import { z } from "zod";
 import {
   TOPICS,
   WebhookReceivedEventSchema,
-  ReviewRequestedEventSchema,
-  IndexIncrementalEventSchema,
   GitHubPushEventSchema,
 } from "@codeguard/kafka";
 import type { ReviewRequestedEvent, IndexIncrementalEvent, GitHubPushEvent } from "@codeguard/kafka";
 import type { EachMessagePayload } from "kafkajs";
-import { db, webhookEvents, repositories } from "@codeguard/db";
-import { eq } from "drizzle-orm";
+import { db, webhookEvents, repositories, eq } from "@codeguard/db";
 import { getWorkerConsumer, getWorkerProducer } from "../queue/kafkaClient.js";
 
 const CONSUMER_GROUP = "codeguard-webhook-processor";

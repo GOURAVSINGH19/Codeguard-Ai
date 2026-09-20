@@ -1,2 +1,8 @@
 {
+  "yaml.schemas": {
+    "https://render.com/schema/render.yaml.json": [
+      "render.yaml"
+    ]
+  },
+  "yaml.schemaStore.enable": true
 }

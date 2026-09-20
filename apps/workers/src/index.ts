@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 import { startWebhookProcessor } from "./jobs/webhookProcessor.js";
 import { startReviewProcessor } from "./jobs/reviewProcessor.js";
@@ -8,11 +9,6 @@ import { disconnectAll } from "./queue/kafkaClient.js";
 //   npx tsx src/index.ts index <owner> <repo> <repositoryId>
 export { indexRepository } from "./jobs/indexRepository.js";
 export { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
-
-console.log("🚀 CodeGuard AI Workers starting...");
-console.log(`   Kafka brokers: ${process.env.KAFKA_BROKERS ?? "localhost:19092"}`);
-console.log(`   AI model:      ${process.env.GROQ_MODEL ?? "openai/gpt-oss-120b"}`);
-console.log("");
 
 /**
  * Start all consumer workers concurrently.
@@ -54,3 +50,4 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 main();
+

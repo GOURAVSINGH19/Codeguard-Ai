@@ -1,0 +1,42 @@
+services:
+  # ── CodeGuard AI: Background Worker ─────────────────────────────────────────
+  # Runs the Kafka consumer workers (webhookProcessor, reviewProcessor,
+  # incrementalIndexer) as a long-running background service on Render.
+  - type: worker # "worker" = no HTTP port, runs forever
+    name: codeguard-workers
+    runtime: docker
+    dockerfilePath: ./apps/workers/Dockerfile
+    dockerContext: . # build context = monorepo root
+    plan: free # Render free tier (512MB RAM, shared CPU)
+    autoDeploy: true # auto-redeploy on every push to main
+    branch: main
+    envVars:
+      # ── Kafka / Upstash ───────────────────────────────────────────────────
+      - key: KAFKA_BROKERS
+        sync: false # set manually in Render dashboard
+      - key: KAFKA_USERNAME
+        sync: false
+      - key: KAFKA_PASSWORD
+        sync: false
+
+      # ── Database ──────────────────────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false
+
+      # ── AI / Groq ─────────────────────────────────────────────────────────
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b # default; override in dashboard
+
+      # ── GitHub App ────────────────────────────────────────────────────────
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_APP_WEBHOOK_SECRET
+        sync: false
+
+      # ── Runtime ───────────────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production

@@ -3,10 +3,21 @@
   "version": "0.0.0",
   "description": "Database package with Drizzle ORM + Neon Postgres + pgvector",
   "main": "./index.ts",
+  "types": "./index.ts",
+  "type": "module",
   "exports": {
-    ".": "./index.ts",
-    "./schema": "./schema/index.ts",
-    "./client": "./client.ts"
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./schema": {
+      "types": "./schema/index.ts",
+      "default": "./schema/index.ts"
+    },
+    "./client": {
+      "types": "./client.ts",
+      "default": "./client.ts"
+    }
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

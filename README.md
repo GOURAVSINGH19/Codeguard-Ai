@@ -269,9 +269,10 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 DATABASE_URL=postgresql://...
 GROQ_API_KEY=gsk_...
-GROQ_MODEL=openai/gpt-oss-120b
-KAFKA_BROKERS=localhost:19092
-GITHUB_WEBHOOK_SECRET=your-secret
+GROQ_MODEL= ---
+
+# GitHub App / Webhook Secret
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
 ```
 
 **`apps/workers/.env`**
@@ -353,17 +354,3 @@ when there's a type error or failing test.
 - **AST-aware chunking** — split at function/class boundaries instead of fixed line count
 - **Review trend dashboard** — quality score over time per repository
 - **Self-hosted deploy** — Docker Compose with local Ollama instead of Groq
-
----
-
-## Documentation
-
-| File | Contents |
-|---|---|
-| [`INTERVIEW_PREP.md`](./INTERVIEW_PREP.md) | Tech decisions with pros/cons + 20 Q&A pairs for senior engineer interviews |
-| [`architecture_selection.md`](.kiro/specs/codeguard-ai-high-level-architecture/architecture_selection.md) | Formal architecture analysis: 3 candidates scored on 8 metrics |
-| [`resume-roadmap.md`](.kiro/specs/codeguard-ai-high-level-architecture/resume-roadmap.md) | Phase-by-phase build plan with interview talking points |
-
----
-
-*Built with Next.js 16 · Kafka (Redpanda) · pgvector · Groq Llama 3.3 70B · Dependency Graph BFS · TypeScript throughout*

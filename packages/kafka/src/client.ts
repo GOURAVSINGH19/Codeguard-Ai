@@ -30,13 +30,8 @@ export function getKafka(): Kafka {
     // If credentials are present, enable SASL/SCRAM (required for Upstash)
     ...(username && password
       ? {
-          ssl: true,
-          sasl: {
-            mechanism: "scram-sha-256",
-            username,
-            password,
-          },
-        }
+        ssl: false,
+      }
       : {}),
     // Keep logs quiet in production; use DEBUG in dev via LOG_LEVEL env
     logLevel:
