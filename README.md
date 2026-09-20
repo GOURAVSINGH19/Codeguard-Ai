@@ -250,7 +250,7 @@ DATABASE_URL="postgresql://user:pass@ep-cool-db.neon.tech/neondb?sslmode=require
 
 # AI Engine Credentials
 GROQ_API_KEY=gsk_...
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL= ---
 
 # GitHub App / Webhook Secret
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
