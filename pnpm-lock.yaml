@@ -35,6 +35,9 @@ importers:
       '@codeguard/kafka':
         specifier: workspace:*
         version: link:../../packages/kafka
+      '@codeguard/review-engine':
+        specifier: workspace:*
+        version: link:../../packages/review-engine
       '@codeguard/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -108,15 +111,24 @@ importers:
 
   apps/workers:
     dependencies:
+      '@codeguard/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@codeguard/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@codeguard/kafka':
         specifier: workspace:*
         version: link:../../packages/kafka
+      '@codeguard/review-engine':
+        specifier: workspace:*
+        version: link:../../packages/review-engine
       '@codeguard/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@octokit/auth-app':
+        specifier: ^7.0.0
+        version: 7.2.2
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -133,22 +145,25 @@ importers:
         specifier: ^7.15.0
         version: 7.15.0(undici@7.29.1)(zod@4.6.2)
       tree-sitter-cpp:
-        specifier: '*'
+        specifier: ~0.23.4
         version: 0.23.4
       tree-sitter-go:
-        specifier: '*'
-        version: 0.25.0
+        specifier: ~0.23.4
+        version: 0.23.4
       tree-sitter-java:
-        specifier: '*'
+        specifier: ~0.23.5
         version: 0.23.5
+      tree-sitter-javascript:
+        specifier: ^0.23.1
+        version: 0.23.1
       tree-sitter-python:
-        specifier: '*'
-        version: 0.25.0
+        specifier: ~0.23.6
+        version: 0.23.6
       tree-sitter-rust:
-        specifier: '*'
-        version: 0.24.0
+        specifier: ~0.23.2
+        version: 0.23.3
       tree-sitter-typescript:
-        specifier: '*'
+        specifier: ~0.23.2
         version: 0.23.2
       web-tree-sitter:
         specifier: ^0.24.0
@@ -172,6 +187,13 @@ importers:
       zod:
         specifier: ^4.6.2
         version: 4.6.2
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/db:
     dependencies:
@@ -194,6 +216,9 @@ importers:
 
   packages/kafka:
     dependencies:
+      '@codeguard/config':
+        specifier: workspace:*
+        version: link:../config
       kafkajs:
         specifier: ^2.2.4
         version: 2.2.4
@@ -206,6 +231,34 @@ importers:
         version: 20.19.43
       typescript:
         specifier: ^5.0.0
+        version: 5.9.3
+
+  packages/review-engine:
+    dependencies:
+      '@codeguard/config':
+        specifier: workspace:*
+        version: link:../config
+      '@codeguard/types':
+        specifier: workspace:*
+        version: link:../types
+      picomatch:
+        specifier: ^4.0.2
+        version: 4.0.7
+      yaml:
+        specifier: ^2.6.1
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.2
+        version: 4.6.2
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      '@types/picomatch':
+        specifier: ^3.0.1
+        version: 3.0.2
+      typescript:
+        specifier: ^5.9.3
         version: 5.9.3
 
   packages/types:
@@ -1825,6 +1878,9 @@ packages:
 
   '@types/pg@8.11.6':
     resolution: {integrity: sha512-/2WmmBXHLsfRqzfHW7BNZ8SbYzE8OSk7i3WjFYvfgRHj7S1xj+16Je5fUKv3lVdVzk/zn9TXOqf+avFCFIE0yQ==}
+
+  '@types/picomatch@3.0.2':
+    resolution: {integrity: sha512-n0i8TD3UDB7paoMMxA3Y65vUncFJXjcUf7lQY7YyKGl6031FNjfsLs6pdLFCy2GNFxItPJG8GvvpbZc2skH7WA==}
 
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
@@ -4455,10 +4511,10 @@ packages:
       tree-sitter:
         optional: true
 
-  tree-sitter-go@0.25.0:
-    resolution: {integrity: sha512-APBc/Dq3xz/e35Xpkhb1blu5UgW+2E3RyGWawZSCNcbGwa7jhSQPS8KsUupuzBla8PCo8+lz9W/JDJjmfRa2tw==}
+  tree-sitter-go@0.23.4:
+    resolution: {integrity: sha512-iQaHEs4yMa/hMo/ZCGqLfG61F0miinULU1fFh+GZreCRtKylFLtvn798ocCZjO2r/ungNZgAY1s1hPFyAwkc7w==}
     peerDependencies:
-      tree-sitter: ^0.25.0
+      tree-sitter: ^0.21.1
     peerDependenciesMeta:
       tree-sitter:
         optional: true
@@ -4479,16 +4535,16 @@ packages:
       tree-sitter:
         optional: true
 
-  tree-sitter-python@0.25.0:
-    resolution: {integrity: sha512-eCmJx6zQa35GxaCtQD+wXHOhYqBxEL+bp71W/s3fcDMu06MrtzkVXR437dRrCrbrDbyLuUDJpAgycs7ncngLXw==}
+  tree-sitter-python@0.23.6:
+    resolution: {integrity: sha512-yIM9z0oxKIxT7bAtPOhgoVl6gTXlmlIhue7liFT4oBPF/lha7Ha4dQBS82Av6hMMRZoVnFJI8M6mL+SwWoLD3A==}
     peerDependencies:
-      tree-sitter: ^0.25.0
+      tree-sitter: ^0.22.1
     peerDependenciesMeta:
       tree-sitter:
         optional: true
 
-  tree-sitter-rust@0.24.0:
-    resolution: {integrity: sha512-NWemUDf629Tfc90Y0Z55zuwPCAHkLxWnMf2RznYu4iBkkrQl2o/CHGB7Cr52TyN5F1DAx8FmUnDtCy9iUkXZEQ==}
+  tree-sitter-rust@0.23.3:
+    resolution: {integrity: sha512-uLdZJ1K26EuJTBMJlz1ltTlg7nJyAYThfouXgigf5ixKOasOL5wNrRCpuWTsl6rDcKlZK9UX+annFLqP/kchwQ==}
     peerDependencies:
       tree-sitter: ^0.22.1
     peerDependenciesMeta:
@@ -4739,6 +4795,11 @@ packages:
 
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
+
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
 
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
@@ -6111,6 +6172,8 @@ snapshots:
       '@types/node': 20.19.43
       pg-protocol: 1.16.0
       pg-types: 4.1.0
+
+  '@types/picomatch@3.0.2': {}
 
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
@@ -8874,7 +8937,7 @@ snapshots:
       node-gyp-build: 4.8.4
       tree-sitter-c: 0.23.6
 
-  tree-sitter-go@0.25.0:
+  tree-sitter-go@0.23.4:
     dependencies:
       node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
@@ -8889,12 +8952,12 @@ snapshots:
       node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
 
-  tree-sitter-python@0.25.0:
+  tree-sitter-python@0.23.6:
     dependencies:
       node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
 
-  tree-sitter-rust@0.24.0:
+  tree-sitter-rust@0.23.3:
     dependencies:
       node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
@@ -9231,6 +9294,8 @@ snapshots:
       powershell-utils: 0.1.0
 
   yallist@3.1.1: {}
+
+  yaml@2.9.1: {}
 
   yocto-queue@0.1.0: {}
 

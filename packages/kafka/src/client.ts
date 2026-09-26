@@ -1,56 +1,36 @@
-import { Kafka, type Producer, type Consumer, logLevel } from "kafkajs";
+import { Kafka, type Producer, type Consumer, logLevel, type SASLOptions } from "kafkajs";
+import { getKafkaConfig } from "@codeguard/config";
+import { TOPICS } from "./topics";
 
 let kafkaInstance: Kafka | null = null;
+
+const LOG_LEVELS = {
+  debug: logLevel.DEBUG,
+  info: logLevel.INFO,
+  warn: logLevel.WARN,
+  error: logLevel.ERROR,
+} as const;
 
 export function getKafka(): Kafka {
   if (kafkaInstance) return kafkaInstance;
 
-  let brokers: string[] = [];
-
-  if (process.env.KAFKA_BROKERS) {
-    brokers = process.env.KAFKA_BROKERS.split(",")
-      .map((b) => b.trim())
-      .filter(Boolean);
-  } else if (process.env.KAFKA_HOST) {
-    const host = process.env.KAFKA_HOST.trim();
-    const port = process.env.KAFKA_PORT ? process.env.KAFKA_PORT.trim() : "9092";
-    brokers = [`${host}:${port}`];
-  } else {
-    brokers = ["localhost:19092"];
-  }
-
-  const username = process.env.KAFKA_USERNAME?.trim();
-  const password = process.env.KAFKA_PASSWORD?.trim();
+  const config = getKafkaConfig();
 
   kafkaInstance = new Kafka({
     clientId: "codeguard-ai",
-    brokers,
+    brokers: config.brokers,
     connectionTimeout: 4000,
     requestTimeout: 6000,
     retry: {
       retries: 2,
       initialRetryTime: 300,
     },
-    // If credentials are present, enable SASL/SCRAM (required for cloud Kafka like Upstash or Aiven)
-    ...(username && password
-      ? {
-        ssl:
-          process.env.KAFKA_SSL === "false"
-            ? false
-            : {
-                rejectUnauthorized:
-                  process.env.KAFKA_SSL_REJECT_UNAUTHORIZED === "true",
-              },
-        sasl: {
-          mechanism: (process.env.KAFKA_SASL_MECHANISM?.trim() as any) || "scram-sha-256",
-          username,
-          password,
-        },
-      }
-      : {}),
-    // Keep logs quiet in production; use DEBUG in dev via LOG_LEVEL env
-    logLevel:
-      process.env.LOG_LEVEL === "debug" ? logLevel.DEBUG : logLevel.WARN,
+    // SASL (Upstash, Aiven, Confluent…) always runs over TLS with certificate
+    // verification ON unless KAFKA_SSL_REJECT_UNAUTHORIZED=false is set.
+    ssl: config.ssl,
+    ...(config.sasl ? { sasl: config.sasl as SASLOptions } : {}),
+    // Kafka's own logs stay quiet unless LOG_LEVEL=debug
+    logLevel: config.logLevel === "debug" ? LOG_LEVELS.debug : LOG_LEVELS.warn,
   });
 
   return kafkaInstance;
@@ -62,13 +42,37 @@ export function getKafka(): Kafka {
  */
 export async function createProducer(): Promise<Producer> {
   const producer = getKafka().producer({
-    // Idempotent producer: guarantees exactly-once delivery per batch
+    // Idempotent producer: no duplicates from producer retries
     idempotent: true,
-    // Require acks from all in-sync replicas before confirming
     transactionTimeout: 30_000,
   });
   await producer.connect();
   return producer;
+}
+
+let sharedProducer: Promise<Producer> | null = null;
+
+/**
+ * One long-lived producer per process (serverless instance or worker).
+ * Creating and tearing down a producer per request costs a full broker
+ * handshake; reusing it keeps webhook latency low. If connecting fails the
+ * cached promise is cleared so the next call retries.
+ */
+export function getSharedProducer(): Promise<Producer> {
+  if (!sharedProducer) {
+    sharedProducer = createProducer().catch((err) => {
+      sharedProducer = null;
+      throw err;
+    });
+  }
+  return sharedProducer;
+}
+
+export async function disconnectSharedProducer(): Promise<void> {
+  if (!sharedProducer) return;
+  const pending = sharedProducer;
+  sharedProducer = null;
+  await (await pending).disconnect().catch(() => {});
 }
 
 /**
@@ -78,7 +82,6 @@ export async function createProducer(): Promise<Producer> {
 export async function createConsumer(groupId: string): Promise<Consumer> {
   const consumer = getKafka().consumer({
     groupId,
-    // Retry up to 5 times with backoff before marking the message as failed
     retry: { retries: 5 },
   });
   await consumer.connect();
@@ -86,26 +89,24 @@ export async function createConsumer(groupId: string): Promise<Consumer> {
 }
 
 /**
- * Ensures all required CodeGuard Kafka topics exist in the broker.
- * Automatically creates them if they do not exist yet.
+ * Ensures all required CodeGuard Kafka topics (including dead-letter topics)
+ * exist in the broker. Creates any that are missing.
  */
 export async function ensureTopicsExist(): Promise<void> {
-  const kafka = getKafka();
-  const admin = kafka.admin();
+  const admin = getKafka().admin();
   try {
     await admin.connect();
     const existingTopics = await admin.listTopics();
-    const { TOPICS } = await import("./topics.js");
-    const topicsToCreate = Object.values(TOPICS).filter(
-      (topic) => !existingTopics.includes(topic)
-    );
+    const topicsToCreate = Object.values(TOPICS).filter((topic) => !existingTopics.includes(topic));
 
     if (topicsToCreate.length > 0) {
       console.log(`[kafka] Auto-creating missing topics: ${topicsToCreate.join(", ")}`);
       await admin.createTopics({
         topics: topicsToCreate.map((topic) => ({
           topic,
-          numPartitions: 1,
+          // Several partitions so different PRs are processed in parallel while
+          // messages for the same PR (same key) stay ordered.
+          numPartitions: topic.endsWith(".dlq") ? 1 : 3,
           replicationFactor: 1,
         })),
       });

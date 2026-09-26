@@ -23,20 +23,24 @@ services:
       - key: DATABASE_URL
         sync: false
 
-      # ── AI / Groq ─────────────────────────────────────────────────────────
+      # ── Review model ──────────────────────────────────────────────────────
+      - key: LLM_PROVIDER
+        value: groq
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b # default; override in dashboard
+      - key: OPENAI_API_KEY # embeddings for RAG
+        sync: false
 
-      # ── GitHub App ────────────────────────────────────────────────────────
+      # ── GitHub App (installation tokens are minted per repository) ─────────
       - key: GITHUB_APP_ID
         sync: false
       - key: GITHUB_APP_PRIVATE_KEY
-        sync: false
-      - key: GITHUB_APP_WEBHOOK_SECRET
         sync: false
 
       # ── Runtime ───────────────────────────────────────────────────────────
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: info

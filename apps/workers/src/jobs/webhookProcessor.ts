@@ -1,239 +1,183 @@
-import { z } from "zod";
-import {
-  TOPICS,
-  WebhookReceivedEventSchema,
-  GitHubPushEventSchema,
-} from "@codeguard/kafka";
-import type { ReviewRequestedEvent, IndexIncrementalEvent, GitHubPushEvent } from "@codeguard/kafka";
-import type { EachMessagePayload } from "kafkajs";
+import { TOPICS, WebhookReceivedEventSchema, GitHubPushEventSchema, prMessageKey } from "@codeguard/kafka";
+import type { ReviewRequestedEvent, IndexIncrementalEvent, WebhookReceivedEvent } from "@codeguard/kafka";
 import { db, webhookEvents, repositories, eq } from "@codeguard/db";
-import { getWorkerConsumer, getWorkerProducer } from "../queue/kafkaClient.js";
+import { getWorkerProducer } from "../queue/kafkaClient.js";
+import { runConsumer, PermanentError } from "../queue/consumer.js";
+import { logger } from "../lib/logger.js";
 
 const CONSUMER_GROUP = "codeguard-webhook-processor";
+
+/** PR actions that should trigger a review. */
+export const REVIEWABLE_PR_ACTIONS = new Set(["opened", "synchronize", "reopened", "ready_for_review"]);
 
 /**
  * webhookProcessor
  *
  * Consumes: codeguard.webhook.received
- * Publishes: codeguard.review.requested  (for pull_request opened/synchronize)
- *            codeguard.index.incremental  (for push events to indexed repos)
- *
- * Responsibilities:
- *  1. Parse + validate the raw GitHub webhook payload
- *  2. Filter for actionable PR events (opened / synchronize) → review.requested
- *  3. Filter for push events to indexed repos → index.incremental
- *  4. Update webhook_events.status in DB (received → processed / ignored / failed)
+ * Publishes: codeguard.review.requested  (PR opened / synchronize / reopened / ready_for_review
+ *                                          on repos with auto-review enabled)
+ *            codeguard.index.incremental  (pushes to the default branch of known repos)
  */
 export async function startWebhookProcessor(): Promise<void> {
-  const consumer = await getWorkerConsumer(CONSUMER_GROUP);
-  const producer = await getWorkerProducer();
-
-  await consumer.subscribe({
+  await runConsumer({
+    name: "webhookProcessor",
+    groupId: CONSUMER_GROUP,
     topic: TOPICS.WEBHOOK_RECEIVED,
-    fromBeginning: false,
-  });
-
-  console.log(
-    `[webhookProcessor] Listening on topic: ${TOPICS.WEBHOOK_RECEIVED}`
-  );
-
-  await consumer.run({
-    // Process one message at a time — prevents out-of-order review triggers
-    eachMessage: async ({ message }: EachMessagePayload) => {
-      const raw = message.value?.toString();
-      if (!raw) return;
-
-      // ── 1. Validate the incoming event envelope ─────────────────────────
-      const envelopeParse = WebhookReceivedEventSchema.safeParse(
-        JSON.parse(raw)
-      );
-      if (!envelopeParse.success) {
-        console.warn(
-          "[webhookProcessor] Invalid event envelope:",
-          envelopeParse.error.issues
-        );
-        return;
-      }
-      const envelope = envelopeParse.data;
-
-      // ── 2. Handle pull_request events (existing logic) ────────────────────
-      if (envelope.githubEvent === "pull_request") {
-        await handlePullRequestEvent(envelope, producer);
-        return;
-      }
-
-      // ── 3. Handle push events (new incremental indexing) ──────────────────
-      if (envelope.githubEvent === "push") {
-        await handlePushEvent(envelope, producer);
-        return;
-      }
-
-      // ── 4. Ignore other events ────────────────────────────────────────────
-      await markWebhookStatus(envelope.deliveryId, "ignored");
-    },
+    schema: WebhookReceivedEventSchema,
+    handler: routeWebhook,
   });
 }
 
-async function handlePullRequestEvent(
-  envelope: z.infer<typeof WebhookReceivedEventSchema>,
-  producer: Awaited<ReturnType<typeof getWorkerProducer>>
-): Promise<void> {
-  // Parse PR payload
+export type RouteOutcome =
+  | { kind: "review"; event: ReviewRequestedEvent }
+  | { kind: "index"; event: IndexIncrementalEvent }
+  | { kind: "ignored"; reason: string };
+
+export interface RepoLookup {
+  (fullName: string): Promise<{ id: string; autoReviewEnabled: boolean; defaultBranch: string; status: string } | null>;
+}
+
+const lookupRepo: RepoLookup = async (fullName) => {
+  const [row] = await db
+    .select({
+      id: repositories.id,
+      autoReviewEnabled: repositories.autoReviewEnabled,
+      defaultBranch: repositories.defaultBranch,
+      status: repositories.status,
+    })
+    .from(repositories)
+    .where(eq(repositories.fullName, fullName))
+    .limit(1);
+  return row ?? null;
+};
+
+/**
+ * Pure routing decision — no Kafka, easy to unit test. DB access is injected.
+ */
+export async function decideRoute(envelope: WebhookReceivedEvent, findRepo: RepoLookup = lookupRepo): Promise<RouteOutcome> {
   let payload: any;
   try {
     payload = JSON.parse(envelope.payload);
   } catch {
-    console.error("[webhookProcessor] Could not parse payload JSON");
-    await markWebhookStatus(envelope.deliveryId, "failed");
-    return;
+    throw new PermanentError("webhook payload is not valid JSON");
   }
 
-  const action: string = payload?.action ?? "";
-  const actionable = ["opened", "synchronize", "reopened"];
+  if (envelope.githubEvent === "pull_request") {
+    const action: string = payload?.action ?? "";
+    if (!REVIEWABLE_PR_ACTIONS.has(action)) return { kind: "ignored", reason: `action ${action || "(none)"}` };
 
-  if (!actionable.includes(action)) {
-    await markWebhookStatus(envelope.deliveryId, "ignored");
-    return;
-  }
+    const pr = payload?.pull_request;
+    const owner: string | undefined = payload?.repository?.owner?.login;
+    const repo: string | undefined = payload?.repository?.name;
+    if (!pr?.number || !owner || !repo || !pr?.head?.sha) throw new PermanentError("pull_request payload missing coordinates");
+    if (pr.draft) return { kind: "ignored", reason: "draft PR" };
 
-  // Extract PR coordinates
-  const prNumber: number = payload?.pull_request?.number;
-  const owner: string = payload?.repository?.owner?.login;
-  const repo: string = payload?.repository?.name;
+    const repoRecord = await findRepo(`${owner}/${repo}`);
+    if (!repoRecord || repoRecord.status !== "active") return { kind: "ignored", reason: "repository not connected" };
+    if (!repoRecord.autoReviewEnabled) return { kind: "ignored", reason: "auto-review disabled for repository" };
 
-  if (!prNumber || !owner || !repo) {
-    console.warn("[webhookProcessor] Missing PR coordinates in payload");
-    await markWebhookStatus(envelope.deliveryId, "failed");
-    return;
-  }
-
-  // Publish review.requested
-  const reviewEvent: ReviewRequestedEvent = {
-    owner,
-    repo,
-    pullNumber: prNumber,
-    userId: null, // bot-triggered — no Clerk user
-    triggeredBy: "webhook",
-    requestedAt: new Date().toISOString(),
-  };
-
-  await producer.send({
-    topic: TOPICS.REVIEW_REQUESTED,
-    messages: [
-      {
-        key: `${owner}/${repo}/${prNumber}`,
-        value: JSON.stringify(reviewEvent),
+    return {
+      kind: "review",
+      event: {
+        owner,
+        repo,
+        pullNumber: pr.number,
+        userId: null, // bot-triggered — no Clerk user
+        triggeredBy: "webhook",
+        installationId: typeof payload?.installation?.id === "number" ? payload.installation.id : null,
+        headSha: pr.head.sha,
+        previousHeadSha: action === "synchronize" && typeof payload?.before === "string" ? payload.before : null,
+        deliveryId: envelope.deliveryId,
+        requestedAt: new Date().toISOString(),
       },
-    ],
-  });
+    };
+  }
 
-  console.log(
-    `[webhookProcessor] → review.requested for ${owner}/${repo}#${prNumber}`
-  );
+  if (envelope.githubEvent === "push") {
+    const parsed = GitHubPushEventSchema.safeParse(payload);
+    if (!parsed.success) throw new PermanentError("invalid push payload");
+    const push = parsed.data;
+    const owner = push.repository.owner.login;
+    const repo = push.repository.name;
 
-  await markWebhookStatus(envelope.deliveryId, "processed");
+    if (/^0+$/.test(push.after)) return { kind: "ignored", reason: "branch deleted" };
+
+    const repoRecord = await findRepo(`${owner}/${repo}`);
+    if (!repoRecord) return { kind: "ignored", reason: "repository not connected" };
+
+    // Only the default branch feeds the code index — feature branches would
+    // pollute review context with unmerged code.
+    if (push.ref !== `refs/heads/${repoRecord.defaultBranch}`) return { kind: "ignored", reason: `push to ${push.ref}` };
+
+    const changedFiles = new Set<string>();
+    for (const commit of push.commits ?? []) {
+      for (const file of [...(commit.added ?? []), ...(commit.removed ?? []), ...(commit.modified ?? [])]) {
+        changedFiles.add(file);
+      }
+    }
+    if (changedFiles.size === 0) return { kind: "ignored", reason: "no files changed" };
+
+    return {
+      kind: "index",
+      event: {
+        owner,
+        repo,
+        repositoryId: repoRecord.id,
+        changedFiles: [...changedFiles],
+        headSha: push.after,
+        ref: push.ref,
+        installationId: typeof payload?.installation?.id === "number" ? payload.installation.id : null,
+        pusher: push.pusher.name,
+        triggeredAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  return { kind: "ignored", reason: `event ${envelope.githubEvent}` };
 }
 
-async function handlePushEvent(
-  envelope: z.infer<typeof WebhookReceivedEventSchema>,
-  producer: Awaited<ReturnType<typeof getWorkerProducer>>
-): Promise<void> {
-  // Parse push payload
-  let pushPayload: GitHubPushEvent;
+async function routeWebhook(envelope: WebhookReceivedEvent): Promise<void> {
+  const log = logger.child({ deliveryId: envelope.deliveryId, githubEvent: envelope.githubEvent });
+  let outcome: RouteOutcome;
   try {
-    const parsed = GitHubPushEventSchema.safeParse(JSON.parse(envelope.payload));
-    if (!parsed.success) {
-      console.warn("[webhookProcessor] Invalid push payload:", parsed.error.issues);
-      await markWebhookStatus(envelope.deliveryId, "failed");
-      return;
-    }
-    pushPayload = parsed.data;
-  } catch {
-    console.error("[webhookProcessor] Could not parse push payload JSON");
-    await markWebhookStatus(envelope.deliveryId, "failed");
+    outcome = await decideRoute(envelope);
+  } catch (err) {
+    await markWebhookStatus(envelope.deliveryId, "failed", (err as Error).message);
+    throw err;
+  }
+
+  const producer = await getWorkerProducer();
+
+  if (outcome.kind === "review") {
+    const e = outcome.event;
+    await producer.send({
+      topic: TOPICS.REVIEW_REQUESTED,
+      messages: [{ key: prMessageKey(e.owner, e.repo, e.pullNumber), value: JSON.stringify(e) }],
+    });
+    log.info("review requested", { pr: `${e.owner}/${e.repo}#${e.pullNumber}`, headSha: e.headSha });
+    await markWebhookStatus(envelope.deliveryId, "processed");
     return;
   }
 
-  const owner = pushPayload.repository.owner.login;
-  const repo = pushPayload.repository.name;
-  const headSha = pushPayload.after;
-  const pusher = pushPayload.pusher.name;
-
-  // Skip if this is a branch deletion (all zeros SHA)
-  if (headSha === "0000000000000000000000000000000000000000") {
-    console.log(`[webhookProcessor] Branch deleted, skipping index for ${owner}/${repo}`);
-    await markWebhookStatus(envelope.deliveryId, "ignored");
+  if (outcome.kind === "index") {
+    const e = outcome.event;
+    await producer.send({
+      topic: TOPICS.INDEX_INCREMENTAL,
+      messages: [{ key: `${e.owner}/${e.repo}`.toLowerCase(), value: JSON.stringify(e) }],
+    });
+    log.info("incremental index requested", { repo: `${e.owner}/${e.repo}`, files: e.changedFiles.length });
+    await markWebhookStatus(envelope.deliveryId, "processed");
     return;
   }
 
-  // Look up repository in our DB to get repositoryId
-  const [repoRecord] = await db
-    .select({ id: repositories.id })
-    .from(repositories)
-    .where(eq(repositories.fullName, `${owner}/${repo}`))
-    .limit(1);
-
-  if (!repoRecord) {
-    // Repository not indexed yet — ignore silently
-    console.log(`[webhookProcessor] Repo ${owner}/${repo} not indexed, skipping incremental index`);
-    await markWebhookStatus(envelope.deliveryId, "ignored");
-    return;
-  }
-
-  // Extract changed files from commits
-  const changedFiles = new Set<string>();
-  for (const commit of pushPayload.commits ?? []) {
-    for (const file of [...(commit.added ?? []), ...(commit.removed ?? []), ...(commit.modified ?? [])]) {
-      changedFiles.add(file);
-    }
-  }
-
-  if (changedFiles.size === 0) {
-    console.log(`[webhookProcessor] No files changed in push to ${owner}/${repo}`);
-    await markWebhookStatus(envelope.deliveryId, "ignored");
-    return;
-  }
-
-  // Publish index.incremental event
-  const indexEvent: IndexIncrementalEvent = {
-    owner,
-    repo,
-    repositoryId: repoRecord.id,
-    changedFiles: Array.from(changedFiles),
-    headSha,
-    pusher,
-    triggeredAt: new Date().toISOString(),
-  };
-
-  await producer.send({
-    topic: TOPICS.INDEX_INCREMENTAL,
-    messages: [
-      {
-        key: `${owner}/${repo}`,
-        value: JSON.stringify(indexEvent),
-      },
-    ],
-  });
-
-  console.log(
-    `[webhookProcessor] → index.incremental for ${owner}/${repo} (${changedFiles.size} files changed)`
-  );
-
-  await markWebhookStatus(envelope.deliveryId, "processed");
+  log.debug("ignored", { reason: outcome.reason });
+  await markWebhookStatus(envelope.deliveryId, "ignored");
 }
 
-async function markWebhookStatus(
-  deliveryId: string,
-  status: "processed" | "ignored" | "failed"
-) {
+async function markWebhookStatus(deliveryId: string, status: "processed" | "ignored" | "failed", error?: string) {
   await db
     .update(webhookEvents)
-    .set({
-      status,
-      processedAt: status === "processed" ? new Date() : undefined,
-    })
+    .set({ status, processedAt: new Date(), error: error?.slice(0, 500) ?? null })
     .where(eq(webhookEvents.githubDeliveryId, deliveryId))
-    .catch((err: any) =>
-      console.warn("[webhookProcessor] Could not update webhook status:", err)
-    );
+    .catch((err: unknown) => logger.warn("could not update webhook status", { deliveryId, error: String(err) }));
 }

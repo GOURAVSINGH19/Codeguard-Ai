@@ -1,15 +1,11 @@
-import {
-  TOPICS,
-  IndexIncrementalEventSchema,
-} from "@codeguard/kafka";
+import { TOPICS, IndexIncrementalEventSchema } from "@codeguard/kafka";
 import type { IndexIncrementalEvent } from "@codeguard/kafka";
-import type { EachMessagePayload } from "kafkajs";
-import { Octokit } from "octokit";
-import { db, repositories } from "@codeguard/db";
-import { eq } from "drizzle-orm";
+import { db, repositories, codeChunks, eq, and } from "@codeguard/db";
 import { EmbeddingService } from "../ai/EmbeddingService.js";
 import { RAGService } from "../rag/RAGService.js";
-import { getWorkerConsumer } from "../queue/kafkaClient.js";
+import { runConsumer } from "../queue/consumer.js";
+import { getRepoOctokit } from "../github/octokit.js";
+import { logger } from "../lib/logger.js";
 
 const CONSUMER_GROUP = "codeguard-incremental-indexer";
 
@@ -25,119 +21,73 @@ const CONSUMER_GROUP = "codeguard-incremental-indexer";
  *  4. Update the commit SHA for those files in code_chunks
  */
 export async function startIncrementalIndexer(): Promise<void> {
-  const consumer = await getWorkerConsumer(CONSUMER_GROUP);
-
-  await consumer.subscribe({
+  await runConsumer({
+    name: "incrementalIndexer",
+    groupId: CONSUMER_GROUP,
     topic: TOPICS.INDEX_INCREMENTAL,
-    fromBeginning: false,
+    schema: IndexIncrementalEventSchema,
+    handler: processIncrementalIndex,
   });
+}
 
-  console.log(
-    `[incrementalIndexer] Listening on topic: ${TOPICS.INDEX_INCREMENTAL}`
+export async function processIncrementalIndex(event: IndexIncrementalEvent): Promise<void> {
+  const log = logger.child({ repo: `${event.owner}/${event.repo}`, headSha: event.headSha });
+  const filesToIndex = event.changedFiles.filter((f) => shouldIndexFile(f));
+  if (filesToIndex.length === 0) {
+    log.info("no indexable files in push");
+    return;
+  }
+
+  const octokit = await getRepoOctokit(event.owner, event.repo, event.installationId);
+  const ragService = new RAGService(EmbeddingService.fromEnv());
+
+  // Resolve each path to its BLOB sha at the pushed commit. (Previously the
+  // commit sha was passed to git.getBlob, which fails for every file.)
+  const { data: tree } = await octokit.rest.git.getTree({
+    owner: event.owner,
+    repo: event.repo,
+    tree_sha: event.headSha,
+    recursive: "1",
+  });
+  const blobShaByPath = new Map(
+    (tree.tree ?? []).filter((t) => t.type === "blob" && t.path && t.sha).map((t) => [t.path!, t.sha!])
   );
 
-  await consumer.run({
-    eachMessage: async ({ message }: EachMessagePayload) => {
-      const raw = message.value?.toString();
-      if (!raw) return;
+  let filesIndexed = 0;
+  let chunksCreated = 0;
+  let filesRemoved = 0;
+  let skippedFiles = 0;
 
-      // ── 1. Validate the incoming event ────────────────────────────────────
-      const parsed = IndexIncrementalEventSchema.safeParse(JSON.parse(raw));
-      if (!parsed.success) {
-        console.warn(
-          "[incrementalIndexer] Invalid event:",
-          parsed.error.issues
-        );
-        return;
+  for (const filePath of filesToIndex) {
+    const blobSha = blobShaByPath.get(filePath);
+    try {
+      if (!blobSha) {
+        // Deleted or renamed away — drop its stale chunks.
+        await db
+          .delete(codeChunks)
+          .where(and(eq(codeChunks.repositoryId, event.repositoryId), eq(codeChunks.filePath, filePath)));
+        filesRemoved++;
+        continue;
       }
-      const event = parsed.data;
-
-      console.log(
-        `[incrementalIndexer] Processing incremental index for ${event.owner}/${event.repo} (${event.changedFiles.length} files)`
-      );
-
-      try {
-        const githubToken = process.env.GITHUB_TOKEN;
-        if (!githubToken) {
-          throw new Error("GITHUB_TOKEN is required in workers .env");
-        }
-
-        const octokit = new Octokit({ auth: githubToken });
-        const embeddingService = EmbeddingService.fromEnv();
-        const ragService = new RAGService(embeddingService);
-
-        // Fetch current commit SHA for each file to compare
-        // We'll re-index all changed files regardless - simpler and safer
-        const filesToIndex = event.changedFiles.filter((f: string) => shouldIndexFile(f));
-
-        if (filesToIndex.length === 0) {
-          console.log(`[incrementalIndexer] No indexable files in changed set`);
-          return;
-        }
-
-        let filesIndexed = 0;
-        let chunksCreated = 0;
-        let skippedFiles = 0;
-
-        // Process in small batches to respect rate limits
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < filesToIndex.length; i += BATCH_SIZE) {
-          const batch = filesToIndex.slice(i, i + BATCH_SIZE);
-
-          for (const filePath of batch) {
-            try {
-              const created = await ragService.indexFile(
-                event.repositoryId,
-                event.owner,
-                event.repo,
-                filePath,
-                event.headSha,
-                octokit
-              );
-              if (created > 0) {
-                filesIndexed++;
-                chunksCreated += created;
-              } else {
-                skippedFiles++;
-              }
-            } catch (err: any) {
-              console.warn(
-                `[incrementalIndexer] Failed to index ${filePath}: ${err.message}`
-              );
-              skippedFiles++;
-            }
-          }
-        }
-
-        // Update repository's default branch commit SHA if this is the default branch
-        const refBranch = event.ref.replace("refs/heads/", "");
-        const [repoRecord] = await db
-          .select({ defaultBranch: repositories.defaultBranch })
-          .from(repositories)
-          .where(eq(repositories.id, event.repositoryId))
-          .limit(1);
-
-        if (repoRecord && refBranch === repoRecord.defaultBranch) {
-          await db
-            .update(repositories)
-            .set({ updatedAt: new Date() })
-            .where(eq(repositories.id, event.repositoryId));
-        }
-
-        console.log(
-          `[incrementalIndexer] ✓ Done ${event.owner}/${event.repo} — ` +
-          `${filesIndexed} files, ${chunksCreated} chunks, ${skippedFiles} skipped`
-        );
-      } catch (err: any) {
-        console.error(
-          `[incrementalIndexer] ✗ Failed for ${event.owner}/${event.repo}:`,
-          err.message
-        );
-        // Don't throw — let Kafka commit the offset. A production system
-        // would send to a dead-letter topic here.
+      const created = await ragService.indexFile(event.repositoryId, event.owner, event.repo, filePath, blobSha, octokit);
+      if (created > 0) {
+        filesIndexed++;
+        chunksCreated += created;
+      } else {
+        skippedFiles++;
       }
-    },
-  });
+    } catch (err) {
+      log.warn("file not indexed", { filePath, error: (err as Error).message });
+      skippedFiles++;
+    }
+  }
+
+  await db
+    .update(repositories)
+    .set({ updatedAt: new Date() })
+    .where(eq(repositories.id, event.repositoryId));
+
+  log.info("incremental index done", { filesIndexed, chunksCreated, filesRemoved, skippedFiles });
 }
 
 function shouldIndexFile(filePath: string): boolean {

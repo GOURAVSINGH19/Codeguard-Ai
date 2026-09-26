@@ -1,8 +1,8 @@
-import { Octokit } from "octokit";
 import { db, repositories } from "@codeguard/db";
 import { eq } from "drizzle-orm";
 import { EmbeddingService } from "../ai/EmbeddingService.js";
 import { RAGService } from "../rag/RAGService.js";
+import { getRepoOctokit } from "../github/octokit.js";
 
 /**
  * indexRepository
@@ -25,11 +25,6 @@ export async function indexRepository(opts: {
 
   console.log(`[indexRepository] Starting for ${owner}/${repo} (id: ${repositoryId})`);
 
-  const githubToken = process.env.GITHUB_TOKEN;
-  if (!githubToken) {
-    throw new Error("GITHUB_TOKEN is required in workers .env to index repositories");
-  }
-
   // Look up the default branch from our DB record
   const [repoRecord] = await db
     .select({ defaultBranch: repositories.defaultBranch })
@@ -39,7 +34,8 @@ export async function indexRepository(opts: {
 
   const defaultBranch = repoRecord?.defaultBranch ?? "main";
 
-  const octokit = new Octokit({ auth: githubToken });
+  // Installation token for the repo (GITHUB_TOKEN only in development)
+  const octokit = await getRepoOctokit(owner, repo);
   const embeddingService = EmbeddingService.fromEnv();
   const ragService = new RAGService(embeddingService);
 

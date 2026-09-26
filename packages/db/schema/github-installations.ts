@@ -1,5 +1,4 @@
 import { bigint, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { users } from "./users";
 
 export const installationStatusEnum = pgEnum("installation_status", [
   "active",
@@ -15,11 +14,15 @@ export const githubInstallations = pgTable("github_installations", {
   accountLogin: text("account_login").notNull(),
   accountType: text("account_type").notNull(), // "User" | "Organization"
   accountAvatarUrl: text("account_avatar_url"),
-  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  /**
+   * Clerk user id of the person who installed the app (verified in the
+   * install callback). Text, not a users.id FK: every route authenticates
+   * with Clerk ids, and a uuid column could never hold one.
+   */
+  userId: text("user_id"),
   status: installationStatusEnum("status").default("active").notNull(),
   permissions: jsonb("permissions"),
   events: jsonb("events"),
-  webhookSecret: text("webhook_secret"),
   suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

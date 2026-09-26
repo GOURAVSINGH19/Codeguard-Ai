@@ -1,4 +1,4 @@
-import { bigint, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { repositories } from "./repositories";
 
 export const prStatusEnum = pgEnum("pr_status", [
@@ -34,7 +34,10 @@ export const pullRequests = pgTable("pull_requests", {
   githubUpdatedAt: timestamp("github_updated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  // One row per PR — lets concurrent writers upsert instead of racing.
+  uniqueIndex("pull_requests_repo_pr_number_uq").on(table.repositoryId, table.prNumber),
+]);
 
 export type PullRequest = typeof pullRequests.$inferSelect;
 export type NewPullRequest = typeof pullRequests.$inferInsert;

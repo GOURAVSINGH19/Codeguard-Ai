@@ -9,10 +9,20 @@
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
     "kafkajs": "^2.2.4",
-    "zod": "^4.6.2"
+    "zod": "^4.6.2",
+    "@codeguard/config": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
     "typescript": "^5.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   }
 }

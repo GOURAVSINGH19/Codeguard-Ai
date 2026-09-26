@@ -1,0 +1,32 @@
+{
+  "name": "@codeguard/review-engine",
+  "version": "0.1.0",
+  "description": "Single owner of CodeGuard AI review logic: prompts, LLM providers, diff annotation, validation and GitHub formatting",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "dependencies": {
+    "@codeguard/config": "workspace:*",
+    "@codeguard/types": "workspace:*",
+    "picomatch": "^4.0.2",
+    "yaml": "^2.6.1",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/picomatch": "^3.0.1",
+    "typescript": "^5.9.3"
+  }
+}
