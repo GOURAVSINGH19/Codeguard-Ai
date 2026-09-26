@@ -9,7 +9,7 @@
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
     "kafkajs": "^2.2.4",
-    "zod": "^4.6.2",
+    "zod": "^4.6.5",
     "@codeguard/config": "workspace:*"
   },
   "devDependencies": {
