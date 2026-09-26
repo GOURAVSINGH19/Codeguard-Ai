@@ -1,5 +1,5 @@
 # ── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM node:22-slim AS deps
+FROM node:26-slim AS deps
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY apps/workers/package.json            ./apps/workers/package.json
 RUN pnpm install --frozen-lockfile --filter workers...
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:22-slim AS runner
+FROM node:26-slim AS runner
 
 WORKDIR /app
 
