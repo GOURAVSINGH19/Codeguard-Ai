@@ -1,5 +1,12 @@
-import { db, reviews, reviewComments, repositories, pullRequests } from "@codeguard/db";
-import { eq, and, desc, gte, sql, count, avg } from "drizzle-orm";
+import { db, reviews, reviewComments } from "@codeguard/db";
+import { eq, and, gte, sql, count, avg } from "drizzle-orm";
+
+export interface UsageSummary {
+  reviews: number;
+  totalTokens: number;
+  avgTokensPerReview: number;
+  avgDurationMs: number;
+}
 
 export interface ScoreTrendPoint {
   date: string;
@@ -28,6 +35,7 @@ export interface TrendsData {
   categoryBreakdown: CategoryBreakdownPoint[];
   velocity: VelocityPoint[];
   topIssues: TopIssuePoint[];
+  usage: UsageSummary;
 }
 
 /**
@@ -155,11 +163,12 @@ export class ReviewAnalyticsService {
   ): Promise<TrendsData> {
     const { days = 30, weeks = 12, topIssuesLimit = 10 } = options || {};
 
-    const [scoreTrend, categoryBreakdown, velocity, topIssues] = await Promise.all([
+    const [scoreTrend, categoryBreakdown, velocity, topIssues, usage] = await Promise.all([
       this.getScoreTrend(userId, days),
       this.getCategoryBreakdown(userId),
       this.getVelocity(userId, weeks),
       this.getTopIssues(userId, topIssuesLimit),
+      this.getUsage(userId, days),
     ]);
 
     return {
@@ -167,6 +176,32 @@ export class ReviewAnalyticsService {
       categoryBreakdown,
       velocity,
       topIssues,
+      usage,
+    };
+  }
+
+  /**
+   * LLM usage for completed reviews in the period: tokens and latency, read
+   * from `reviews.metadata` (written by the review engine).
+   */
+  async getUsage(userId: string, days: number = 30): Promise<UsageSummary> {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const [row] = await db
+      .select({
+        reviews: count(),
+        totalTokens: sql<number>`coalesce(sum((${reviews.metadata}->'usage'->>'totalTokens')::bigint), 0)`,
+        avgDurationMs: sql<number>`coalesce(avg((${reviews.metadata}->>'durationMs')::numeric), 0)`,
+      })
+      .from(reviews)
+      .where(and(eq(reviews.userId, userId), eq(reviews.status, "completed"), gte(reviews.createdAt, since)));
+
+    const n = Number(row?.reviews ?? 0);
+    const tokens = Number(row?.totalTokens ?? 0);
+    return {
+      reviews: n,
+      totalTokens: tokens,
+      avgTokensPerReview: n > 0 ? Math.round(tokens / n) : 0,
+      avgDurationMs: Math.round(Number(row?.avgDurationMs ?? 0)),
     };
   }
 }

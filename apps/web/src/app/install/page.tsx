@@ -1,8 +1,18 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
+
+const INSTALL_ERRORS: Record<string, string> = {
+  not_authenticated: "Please sign in before installing the GitHub App.",
+  missing_params: "GitHub did not return the installation details. Make sure the app requests user authorization during installation.",
+  invalid_state: "The installation link expired or was opened in another browser. Please start again.",
+  forbidden: "Your GitHub account does not have access to that installation.",
+  installation_not_found: "GitHub could not find that installation.",
+  install_failed: "Installation failed. Please try again.",
+};
 
 interface Installation {
   id: string;
@@ -28,43 +38,70 @@ interface Repository {
   installationId: string | null;
 }
 
+async function loadInstallData(): Promise<{ installations: Installation[]; repos: Repository[] }> {
+  const [installationsRes, reposRes] = await Promise.all([
+    fetch("/api/github/app/installations"),
+    fetch("/api/github/repos"),
+  ]);
+  const installations = installationsRes.ok ? ((await installationsRes.json()).installations ?? []) : [];
+  const repos = reposRes.ok ? ((await reposRes.json()).repos ?? []) : [];
+  return { installations, repos };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Something went wrong";
+}
+
 export default function InstallPage() {
-  const { isSignedIn, user } = useUser();
+  // useSearchParams() needs a Suspense boundary for static rendering.
+  return (
+    <Suspense fallback={null}>
+      <InstallPageContent />
+    </Suspense>
+  );
+}
+
+function InstallPageContent() {
+  const { isSignedIn } = useUser();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  // Result of the GitHub App callback (/install?success=true or ?error=<code>)
+  const [error, setError] = useState<string | null>(() => {
+    const code = searchParams.get("error");
+    return code ? INSTALL_ERRORS[code] ?? "Installation failed. Please try again." : null;
+  });
+  const [success, setSuccess] = useState(() => searchParams.has("success"));
   const [activeTab, setActiveTab] = useState<"install" | "manage">("install");
 
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
-    if (isSignedIn) {
-      fetchData();
-    }
-  }, [isSignedIn]);
+    if (!isSignedIn) return;
+    let cancelled = false;
+    loadInstallData()
+      .then((data) => {
+        if (cancelled) return;
+        setInstallations(data.installations);
+        setRepositories(data.repos);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn, reloadKey]);
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [installationsRes, reposRes] = await Promise.all([
-        fetch("/api/github/app/installations"),
-        fetch("/api/github/repos"),
-      ]);
-
-      if (installationsRes.ok) {
-        const data = await installationsRes.json();
-        setInstallations(data.installations || []);
-      }
-      if (reposRes.ok) {
-        const data = await reposRes.json();
-        setRepositories(data.repos || []);
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Drop ?success / ?error from the address bar so a refresh doesn't repeat it.
+  useEffect(() => {
+    if (searchParams.has("success") || searchParams.has("error")) router.replace("/install");
+  }, [searchParams, router]);
 
   const handleInstallClick = () => {
     window.location.href = "/api/github/app/install";
@@ -77,13 +114,15 @@ export default function InstallPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !repo.autoReviewEnabled }),
       });
-      if (res.ok) {
-        setRepositories(repositories.map((r) =>
-          r.id === repo.id ? { ...r, autoReviewEnabled: !repo.autoReviewEnabled } : r
-        ));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Could not update auto-review");
       }
-    } catch (err: any) {
-      setError(err.message);
+      setRepositories((prev) =>
+        prev.map((r) => (r.id === repo.id ? { ...r, autoReviewEnabled: !repo.autoReviewEnabled } : r))
+      );
+    } catch (err) {
+      setError(errorMessage(err));
     }
   };
 
@@ -95,17 +134,13 @@ export default function InstallPage() {
       const res = await fetch(`/api/github/app/installations/${installationId}`, {
         method: "DELETE",
       });
-      if (res.ok) {
-        fetchData();
-      }
-    } catch (err: any) {
-      setError(err.message);
+      if (!res.ok) throw new Error("Could not uninstall the GitHub App");
+      setLoading(true);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setError(errorMessage(err));
     }
   };
-
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get("success")) setSuccess(true);
-  if (urlParams.get("error")) setError(urlParams.get("error")!);
 
   useEffect(() => {
     if (success || error) {

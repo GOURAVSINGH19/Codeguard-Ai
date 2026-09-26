@@ -2,36 +2,22 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { UuidSchema } from "@codeguard/types";
 import { ReviewPersistenceService } from "@/services";
+import { handleApiError, jsonError } from "@/lib/api";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+/** GET /api/reviews/:id — one of the caller's reviews (also used for polling). */
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return jsonError(401, "Unauthorized");
 
-    const { id: reviewId } = await params;
-    const uuidCheck = UuidSchema.safeParse(reviewId);
-    if (!uuidCheck.success) {
-      return NextResponse.json(
-        { error: "Invalid review ID format (must be a valid UUID)" },
-        { status: 400 }
-      );
-    }
+    const { id } = await params;
+    if (!UuidSchema.safeParse(id).success) return jsonError(400, "Invalid review ID format (must be a valid UUID)");
 
-    const persistence = new ReviewPersistenceService();
-    const review = await persistence.getReviewById(reviewId, userId);
+    const review = await new ReviewPersistenceService().getReviewById(id, userId);
+    if (!review) return jsonError(404, "Review not found");
 
-    if (!review) {
-      return NextResponse.json({ error: "Review not found" }, { status: 404 });
-    }
-
-    return NextResponse.json({ review });
-  } catch (error: any) {
-    console.error("[GET /api/reviews/[id]]", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ review }, { headers: { "Cache-Control": "no-store" } });
+  } catch (err) {
+    return handleApiError(err, "GET /api/reviews/[id]");
   }
 }

@@ -1,6 +1,8 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { Octokit } from "octokit";
-import type { ReviewIssue } from "@codeguard/types";
+import { HttpError } from "@/lib/api";
+import { postReview } from "@codeguard/review-engine";
+import type { PostReviewInput, PostReviewResult, PRFileInput } from "@codeguard/review-engine";
 
 export interface GitHubRepo {
   id: number;
@@ -43,7 +45,8 @@ export interface GitHubPRDetail extends GitHubPR {
   repoCloneUrl: string | null;
   repoHtmlUrl: string | null;
   files: GitHubPRFile[];
-  diffContext: string;
+  /** Files with their patches, for the review engine (not sent to the browser). */
+  patches: PRFileInput[];
 }
 
 export interface GitHubPRFile {
@@ -53,10 +56,7 @@ export interface GitHubPRFile {
   deletions: number;
 }
 
-export interface PostCommentResult {
-  htmlUrl: string;
-  reviewId: number;
-}
+export type PostCommentResult = PostReviewResult;
 
 /**
  * GitHubService
@@ -82,7 +82,7 @@ export class GitHubService {
   static async fromCurrentUser(): Promise<GitHubService> {
     const { userId } = await auth();
     if (!userId) {
-      throw new Error("Unauthorized");
+      throw new HttpError(401, "Unauthorized");
     }
 
     const client = await clerkClient();
@@ -93,9 +93,7 @@ export class GitHubService {
 
     const token = response.data?.[0]?.token;
     if (!token) {
-      throw new Error(
-        "GitHub OAuth token not found. Please sign in with GitHub."
-      );
+      throw new HttpError(400, "No GitHub connection found. Please sign in with GitHub.", "github_not_connected");
     }
 
     return new GitHubService(new Octokit({ auth: token }));
@@ -160,23 +158,16 @@ export class GitHubService {
     repo: string,
     pullNumber: number
   ): Promise<GitHubPRDetail> {
-    const [{ data: pr }, { data: files }] = await Promise.all([
+    const [{ data: pr }, files] = await Promise.all([
       this.octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber }),
-      this.octokit.rest.pulls.listFiles({
+      // All pages (GitHub caps a PR at 3,000 files) — not just the first 50.
+      this.octokit.paginate(this.octokit.rest.pulls.listFiles, {
         owner,
         repo,
         pull_number: pullNumber,
-        per_page: 50,
+        per_page: 100,
       }),
     ]);
-
-    // Build the diff context string consumed by AIReviewService
-    const diffContext = files
-      .map(
-        (f) =>
-          `File: ${f.filename} (${f.status})\nPatch:\n${f.patch ?? "No patch available"}`
-      )
-      .join("\n\n---\n\n");
 
     return {
       id: pr.id,
@@ -210,94 +201,29 @@ export class GitHubService {
         additions: f.additions,
         deletions: f.deletions,
       })),
-      diffContext,
+      patches: files.map((f) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        patch: f.patch ?? null,
+      })),
     };
   }
 
   /**
-   * Post a formatted CodeGuard AI review comment on a GitHub PR.
-   * Tries pulls.createReview first, falls back to issues.createComment.
+   * Post a stored review to the PR: inline comments on changed lines plus a
+   * summary. Falls back to summary-only and then to an issue comment.
    */
-  async postReviewComment(
-    owner: string,
-    repo: string,
-    pullNumber: number,
-    score: number,
-    summary: string,
-    issues: ReviewIssue[]
-  ): Promise<PostCommentResult> {
-    const body = this.formatReviewBody(score, summary, issues);
-
+  async postReview(input: PostReviewInput): Promise<PostCommentResult> {
     try {
-      const { data } = await this.octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        event: "COMMENT",
-        body,
-      });
-      return { htmlUrl: data.html_url, reviewId: data.id };
-    } catch (primaryErr: any) {
-      console.warn(
-        "pulls.createReview failed, trying issues.createComment fallback:",
-        primaryErr?.message
-      );
-
-      try {
-        const { data } = await this.octokit.rest.issues.createComment({
-          owner,
-          repo,
-          issue_number: pullNumber,
-          body,
-        });
-        return { htmlUrl: data.html_url, reviewId: data.id };
-      } catch (fallbackErr: any) {
-        if (
-          fallbackErr?.status === 403 ||
-          fallbackErr?.message?.includes("Must have admin rights") ||
-          fallbackErr?.message?.includes("Resource not accessible")
-        ) {
-          throw new Error(
-            "GitHub Permission Error: Write/admin access is required to post PR comments, or your OAuth token lacks the 'repo' scope."
-          );
-        }
-        throw fallbackErr;
+      return await postReview(this.octokit, input);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 403 || status === 404) {
+        throw new HttpError(403, "GitHub denied the comment. You need write access to this repository.", "github_forbidden");
       }
+      throw err;
     }
-  }
-
-  // ─── Private helpers ──────────────────────────────────────────────────────
-
-  private formatReviewBody(
-    score: number,
-    summary: string,
-    issues: ReviewIssue[]
-  ): string {
-    const formattedIssues = issues
-      .map(
-        (issue, idx) =>
-          `### ${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.category}\n` +
-          `**Message**: ${issue.message}\n` +
-          (issue.line != null ? `**Line**: ${issue.line}\n` : "") +
-          (issue.suggestion
-            ? `\n\`\`\`suggestion\n${issue.suggestion}\n\`\`\`\n`
-            : "")
-      )
-      .join("\n\n");
-
-    return `## 🛡️ CodeGuard AI Review Summary
-
-**Quality Score**: \`${score.toFixed(1)} / 10\`
-
-### Executive Summary
-${summary}
-
----
-
-### Identified Issues (${issues.length})
-${formattedIssues || "🎉 No major security or code quality issues detected!"}
-
----
-*Powered by CodeGuard AI Reviewer*`;
   }
 }
