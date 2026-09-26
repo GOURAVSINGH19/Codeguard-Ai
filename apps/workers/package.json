@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:local": "tsx watch src/local.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"

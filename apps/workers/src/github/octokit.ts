@@ -27,7 +27,14 @@ export async function getInstallationOctokit(installationId: number): Promise<Oc
   return octokit;
 }
 
-/** Find the installation that owns a repository (from the webhook or our DB). */
+const repoInstallationCache = new Map<string, number>();
+
+/**
+ * Find the installation that owns a repository: the webhook hint, then our DB,
+ * then GitHub itself. The last step covers events delivered by a plain repo
+ * webhook (no `installation` in the payload) and installs whose `installation`
+ * event never reached us.
+ */
 export async function resolveInstallationId(
   owner: string,
   repo: string,
@@ -40,7 +47,32 @@ export async function resolveInstallationId(
     .innerJoin(githubInstallations, eq(repositories.installationId, githubInstallations.id))
     .where(eq(repositories.fullName, `${owner}/${repo}`))
     .limit(1);
-  return row?.installationId ? Number(row.installationId) : null;
+  if (row?.installationId) return Number(row.installationId);
+  return lookupInstallationOnGitHub(owner, repo);
+}
+
+async function lookupInstallationOnGitHub(owner: string, repo: string): Promise<number | null> {
+  const key = `${owner}/${repo}`.toLowerCase();
+  const cached = repoInstallationCache.get(key);
+  if (cached) return cached;
+
+  let app: ReturnType<typeof getGitHubAppConfig>;
+  try {
+    app = getGitHubAppConfig();
+  } catch (err) {
+    if (err instanceof MissingConfigError) return null; // App not configured — fall back to GITHUB_TOKEN
+    throw err;
+  }
+
+  const appOctokit = new Octokit({ authStrategy: createAppAuth, auth: { appId: app.appId, privateKey: app.privateKey } });
+  try {
+    const { data } = await appOctokit.request("GET /repos/{owner}/{repo}/installation", { owner, repo });
+    repoInstallationCache.set(key, data.id);
+    return data.id;
+  } catch (err) {
+    if ((err as { status?: number }).status === 404) return null; // App not installed on this repo
+    throw err;
+  }
 }
 
 export async function getRepoOctokit(owner: string, repo: string, installationHint?: number | null): Promise<Octokit> {

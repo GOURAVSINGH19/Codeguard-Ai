@@ -29,7 +29,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
     await db
       .update(repositories)
-      .set({ status: "inactive", autoReviewEnabled: true, updatedAt: new Date() })
+      .set({ status: "inactive", autoReviewEnabled: false, updatedAt: new Date() })
       .where(eq(repositories.installationId, installation.id));
 
     await db
