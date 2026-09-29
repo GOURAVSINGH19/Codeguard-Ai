@@ -25,6 +25,14 @@ export const ReviewRequestedEventSchema = z.object({
   userId: z.string().nullable(),
   /** How this review was triggered */
   triggeredBy: z.enum(["webhook", "manual", "api"]),
+  /** GitHub App installation that owns the repo — used to mint a short-lived token */
+  installationId: z.number().int().positive().nullable().optional(),
+  /** Head commit the review must run against (idempotency key with owner/repo/PR) */
+  headSha: z.string().min(7).optional(),
+  /** Previous head SHA on `synchronize` — lets the worker review only new commits */
+  previousHeadSha: z.string().min(7).nullable().optional(),
+  /** GitHub delivery id that caused this request (for tracing) */
+  deliveryId: z.string().optional(),
   /** ISO timestamp */
   requestedAt: z.string().datetime(),
 });
@@ -92,6 +100,10 @@ export const IndexIncrementalEventSchema = z.object({
   changedFiles: z.array(z.string()),
   /** Head commit SHA after the push */
   headSha: z.string(),
+  /** Git ref that was pushed, e.g. "refs/heads/main" */
+  ref: z.string().optional(),
+  /** GitHub App installation that owns the repo */
+  installationId: z.number().int().positive().nullable().optional(),
   /** Who pushed */
   pusher: z.string(),
   /** ISO timestamp */
@@ -99,3 +111,17 @@ export const IndexIncrementalEventSchema = z.object({
 });
 
 export type IndexIncrementalEvent = z.infer<typeof IndexIncrementalEventSchema>;
+
+// ─── Dead-letter envelope ────────────────────────────────────────────────────
+
+export const DeadLetterEventSchema = z.object({
+  sourceTopic: z.string(),
+  /** Original message value, untouched (may be invalid JSON — that's why it's here) */
+  originalValue: z.string().nullable(),
+  originalKey: z.string().nullable(),
+  error: z.string(),
+  attempts: z.number().int().nonnegative(),
+  failedAt: z.string().datetime(),
+});
+
+export type DeadLetterEvent = z.infer<typeof DeadLetterEventSchema>;

@@ -1,50 +1,27 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { ReviewInputSchema } from "@codeguard/types";
-import { AIReviewService, ReviewPersistenceService } from "@/services";
+import { ReviewService } from "@/services";
+import { handleApiError, jsonError } from "@/lib/api";
 
+/**
+ * POST /api/review — start a snippet review.
+ * Returns 202 with the review id; poll GET /api/reviews/:id for the result.
+ */
 export async function POST(req: Request) {
   try {
     const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) return jsonError(401, "Unauthorized");
+
+    const body = await req.json().catch(() => null);
+    const parsed = ReviewInputSchema.safeParse(body);
+    if (!parsed.success) {
+      return jsonError(400, "Invalid request payload", { details: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) });
     }
 
-    const body = await req.json();
-    const validation = ReviewInputSchema.safeParse(body);
-    if (!validation.success) {
-      return NextResponse.json(
-        { error: "Invalid request payload", details: validation.error.format() },
-        { status: 400 }
-      );
-    }
-
-    const { code, language, title } = validation.data;
-
-    const aiService = AIReviewService.fromEnv();
-    const reviewOutput = await aiService.reviewSnippet(code, language);
-
-    const persistence = new ReviewPersistenceService();
-    const saved = await persistence.saveSnippetReview({
-      userId,
-      code,
-      language,
-      title,
-      reviewOutput,
-    });
-
-    return NextResponse.json({
-      id: saved.id,
-      score: reviewOutput.score,
-      summary: reviewOutput.summary,
-      issues: reviewOutput.issues,
-      createdAt: saved.createdAt,
-    });
-  } catch (error: any) {
-    console.error("[POST /api/review]", error);
-    return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
-    );
+    const started = await new ReviewService().startSnippetReview({ userId, ...parsed.data });
+    return NextResponse.json(started, { status: 202 });
+  } catch (err) {
+    return handleApiError(err, "POST /api/review");
   }
 }

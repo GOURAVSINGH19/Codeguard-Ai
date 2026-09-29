@@ -1,200 +1,185 @@
 name: CI
 
-# ─── When does this run? ──────────────────────────────────────────────────────
 on:
   pull_request:
-    branches: [main, master, develop]   # runs when PR targets these branches
+    branches: [main, master, develop]
   push:
-    branches: [main, master]            # also runs on direct push to main
+    branches: [main, master]
 
-# ─── Cancel in-progress runs on the same PR (saves CI minutes) ───────────────
+# Cancel in-progress runs on the same ref (saves CI minutes)
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Type Check
-  # Runs TypeScript compiler (tsc --noEmit) across all packages.
-  # Catches type errors before tests even run.
+  # Type check every workspace package (web, workers, shared packages)
   # ════════════════════════════════════════════════════════════════════════════
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.12.4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Type check all packages
+        run: pnpm typecheck
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Type check — web app
-        run: pnpm --filter web exec tsc --noEmit
-
-      - name: Type check — workers app
-        run: pnpm --filter workers exec tsc --noEmit
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Lint
   # ════════════════════════════════════════════════════════════════════════════
   lint:
     name: Lint
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.12.4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
+      - run: pnpm install --frozen-lockfile
       - name: Lint — web app
         run: pnpm --filter web lint
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 3 — Unit Tests
-  # All 71 Vitest tests. Runs IN PARALLEL with typecheck and lint.
+  # Unit tests — no real services needed (LLM, DB, Kafka and GitHub are mocked)
   # ════════════════════════════════════════════════════════════════════════════
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.12.4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run tests
-        run: pnpm test
-        # No real services needed — all tests use mocks:
-        #   - Groq API    → mocked via vi.stubGlobal("fetch")
-        #   - PostgreSQL  → mocked via vi.mock("@codeguard/db")
-        #   - OpenAI      → mocked EmbeddingService
-        #   - Kafka       → not tested at unit level
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 4 — Build Check
-  # Only runs AFTER type check + lint + tests all pass.
+  # Schema and migrations must agree; dependencies must be free of known
+  # high-severity advisories.
+  # ════════════════════════════════════════════════════════════════════════════
+  checks:
+    name: Migrations & Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Drizzle migrations are consistent
+        run: pnpm db:check
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+      - name: Schema has no un-generated changes
+        run: |
+          pnpm --filter @codeguard/db exec drizzle-kit generate --name ci_drift_check
+          if [ -n "$(git status --porcelain packages/db/migrations)" ]; then
+            echo "::error::packages/db/schema changed without a migration. Run 'pnpm db:generate' and commit the result."
+            git status --porcelain packages/db/migrations
+            exit 1
+          fi
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+      - name: Dependency audit (high and critical)
+        run: pnpm audit --prod --audit-level high
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Secret scanning on every push/PR
+  # ════════════════════════════════════════════════════════════════════════════
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Build — web app and the workers Docker image
   # ════════════════════════════════════════════════════════════════════════════
   build:
     name: Build
     runs-on: ubuntu-latest
     needs: [typecheck, lint, test]
-
     env:
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_placeholder
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
       CLERK_SECRET_KEY: sk_test_placeholder
       DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
       GROQ_API_KEY: placeholder
-      GROQ_MODEL: llama-3.3-70b-versatile
       KAFKA_BROKERS: localhost:19092
-      GITHUB_WEBHOOK_SECRET: placeholder
-
+      GITHUB_APP_WEBHOOK_SECRET: placeholder
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.12.4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
+      - run: pnpm install --frozen-lockfile
       - name: Build — web app
         run: pnpm --filter web build
+      - name: Build — workers Docker image
+        run: docker build -f apps/workers/Dockerfile -t codeguard-workers:ci .
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 5 — CodeGuard AI Self-Review
+  # CodeGuard reviewing its own PRs (informational, never blocks a merge)
   #
-  # After the build passes, call the CodeGuard API to review this PR's own diff.
-  # This demonstrates the product eating its own dog food:
-  # every PR to CodeGuard gets reviewed by CodeGuard.
-  #
-  # Requirements:
-  #   CODEGUARD_API_URL  — your deployed app URL  (GitHub secret)
-  #   CODEGUARD_API_KEY  — a Clerk session token  (GitHub secret, optional)
-  #
-  # The job is non-blocking (continue-on-error: true) — a CodeGuard API failure
-  # never blocks a merge. The review is informational, not a gate.
+  # Needs repository secrets CODEGUARD_API_URL and CODEGUARD_API_KEY. `secrets`
+  # can't be used in `if:` expressions, so the value is mapped to an env var
+  # and checked there.
   # ════════════════════════════════════════════════════════════════════════════
   codeguard-review:
     name: CodeGuard AI Review
     runs-on: ubuntu-latest
     needs: [build]
-    # Only run on actual PRs (not direct pushes to main)
     if: github.event_name == 'pull_request'
-    # Never block merge if CodeGuard itself is down
     continue-on-error: true
-
+    env:
+      CODEGUARD_API_URL: ${{ secrets.CODEGUARD_API_URL }}
+      CODEGUARD_API_KEY: ${{ secrets.CODEGUARD_API_KEY }}
     steps:
-      - name: Request CodeGuard AI PR Review
-        # Only runs if CODEGUARD_API_URL secret is configured.
-        # If the secret is not set, this step is skipped gracefully.
-        if: ${{ secrets.CODEGUARD_API_URL != '' }}
+      - name: Request CodeGuard AI PR review
+        if: env.CODEGUARD_API_URL != ''
         run: |
-          echo "Requesting CodeGuard AI review for PR #${{ github.event.pull_request.number }}"
-          echo "Repository: ${{ github.repository }}"
-
-          # Split owner/repo from github.repository (format: "owner/repo")
-          OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
-          REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
           PR_NUMBER="${{ github.event.pull_request.number }}"
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          echo "Requesting CodeGuard AI review for $OWNER/$REPO#$PR_NUMBER"
 
-          # Call the CodeGuard API to trigger a review
-          RESPONSE=$(curl --silent --show-error --fail \
-            --max-time 30 \
-            -X POST "${{ secrets.CODEGUARD_API_URL }}/api/github/review" \
+          RESPONSE=$(curl --silent --show-error --fail --max-time 30 \
+            -X POST "$CODEGUARD_API_URL/api/github/review" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.CODEGUARD_API_KEY }}" \
-            -d "{\"owner\":\"$OWNER\",\"repo\":\"$REPO\",\"pullNumber\":$PR_NUMBER}" \
-            2>&1) || {
-              echo "⚠️  CodeGuard review request failed (non-blocking): $RESPONSE"
+            -H "Authorization: Bearer $CODEGUARD_API_KEY" \
+            -d "{\"owner\":\"$OWNER\",\"repo\":\"$REPO\",\"pullNumber\":$PR_NUMBER}" 2>&1) || {
+              echo "::warning::CodeGuard review request failed (non-blocking): $RESPONSE"
               exit 0
             }
-
-          echo "✅ CodeGuard AI review triggered successfully"
-          echo "$RESPONSE" | head -c 500
+          echo "CodeGuard AI review started: $(echo "$RESPONSE" | head -c 300)"
+      - name: Skip (not configured)
+        if: env.CODEGUARD_API_URL == ''
+        run: echo "CODEGUARD_API_URL secret not set — skipping self-review."

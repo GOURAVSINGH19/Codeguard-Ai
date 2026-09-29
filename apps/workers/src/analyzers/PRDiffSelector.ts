@@ -6,7 +6,16 @@ export interface PRFile {
   status: string;  // "added" | "modified" | "removed" | "renamed"
   additions: number;
   deletions: number;
-  patch?: string;  // the actual diff patch text
+  patch?: string | null;  // the actual diff patch text (null when GitHub omits it)
+}
+
+export interface RankedFiles {
+  /** Changed files, highest review priority first */
+  rankedFiles: string[];
+  /** Files that import changed modules but are not in the PR */
+  transitiveRiskFiles: string[];
+  /** Whether the dependency graph was available */
+  graphUsed: boolean;
 }
 
 export interface SelectedDiff {
@@ -52,10 +61,15 @@ export class PRDiffSelector {
    * @param repoFileContents  Map of filePath → source content (for import extraction)
    *                          Can be partial — graph works with whatever is provided
    */
-  select(
+  /**
+   * Rank changed files by risk (dependency-graph blast radius, then size) and
+   * list files that import the changed code but are not in the PR. The review
+   * engine uses this order to decide what fits in the prompt budget.
+   */
+  rank(
     prFiles: PRFile[],
     repoFileContents: Map<string, string>
-  ): SelectedDiff {
+  ): RankedFiles {
     // ── 1. Build dependency graph from repo file contents ─────────────────
     const graph = new DependencyGraph();
     let graphUsed = false;
@@ -79,7 +93,7 @@ export class PRDiffSelector {
 
     if (graphUsed && graph.size > 0) {
       const ranked = graph.rankFilesForReview(changedFilesMap, 3, 20);
-      rankedFiles = ranked.map((r) => r.path);
+      rankedFiles = ranked.map((r) => r.path).filter((p) => changedFilesMap.has(p));
 
       // Add any PR files not in the graph (new files have no import data yet)
       for (const f of prFiles) {
@@ -93,6 +107,31 @@ export class PRDiffSelector {
         .sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))
         .map((f) => f.filename);
     }
+
+    // ── 4. Find transitive risk files (not in PR but at risk) ─────────────
+    const transitiveRiskFiles: string[] = [];
+    if (graphUsed) {
+      const blastRadius = graph.getBlastRadius(Array.from(changedFilesMap.keys()), 2);
+      for (const [filePath, distance] of blastRadius) {
+        if (distance > 0 && !changedFilesMap.has(filePath)) {
+          transitiveRiskFiles.push(filePath);
+        }
+      }
+    }
+
+    return { rankedFiles, transitiveRiskFiles, graphUsed };
+  }
+
+  /**
+   * Legacy helper: rank + build a plain-text diff within MAX_DIFF_CHARS.
+   * New code should call `rank()` and let `@codeguard/review-engine` build the
+   * annotated, budgeted diff.
+   */
+  select(
+    prFiles: PRFile[],
+    repoFileContents: Map<string, string>
+  ): SelectedDiff {
+    const { rankedFiles, transitiveRiskFiles, graphUsed } = this.rank(prFiles, repoFileContents);
 
     // ── 4. Build diff context within budget ───────────────────────────────
     const patchMap = new Map<string, PRFile>();
@@ -123,20 +162,6 @@ export class PRDiffSelector {
         includedFiles.push(filePath);
       } else {
         excludedFiles.push(filePath);
-      }
-    }
-
-    // ── 5. Find transitive risk files (not in PR but at risk) ─────────────
-    const transitiveRiskFiles: string[] = [];
-    if (graphUsed) {
-      const blastRadius = graph.getBlastRadius(
-        Array.from(changedFilesMap.keys()),
-        2
-      );
-      for (const [filePath, distance] of blastRadius) {
-        if (distance > 0 && !patchMap.has(filePath)) {
-          transitiveRiskFiles.push(filePath);
-        }
       }
     }
 

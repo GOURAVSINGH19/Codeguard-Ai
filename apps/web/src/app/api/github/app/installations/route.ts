@@ -1,26 +1,30 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db, githubInstallations } from "@codeguard/db";
-import { eq } from "drizzle-orm";
+import { db, githubInstallations, eq, and, ne } from "@codeguard/db";
+import { handleApiError, jsonError } from "@/lib/api";
 
 export async function GET() {
   try {
     const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return jsonError(401, "Unauthorized");
 
     const installations = await db
-      .select()
+      .select({
+        id: githubInstallations.id,
+        installationId: githubInstallations.installationId,
+        accountLogin: githubInstallations.accountLogin,
+        accountType: githubInstallations.accountType,
+        accountAvatarUrl: githubInstallations.accountAvatarUrl,
+        status: githubInstallations.status,
+        permissions: githubInstallations.permissions,
+        events: githubInstallations.events,
+        createdAt: githubInstallations.createdAt,
+      })
       .from(githubInstallations)
-      .where(eq(githubInstallations.userId, userId));
+      .where(and(eq(githubInstallations.userId, userId), ne(githubInstallations.status, "deleted")));
 
     return NextResponse.json({ installations });
-  } catch (error: any) {
-    console.error("[GET /api/github/app/installations]", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to fetch installations" },
-      { status: 500 }
-    );
+  } catch (err) {
+    return handleApiError(err, "GET /api/github/app/installations");
   }
 }

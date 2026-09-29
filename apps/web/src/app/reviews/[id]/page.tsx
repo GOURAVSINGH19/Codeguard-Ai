@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { pollReview } from "@/lib/poll-review";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "@/components/ui/SeverityBadge";
@@ -42,23 +43,18 @@ export default function ReviewDetailPage() {
 
   useEffect(() => {
     if (!reviewId) return;
-    fetchReviewDetail();
+    const controller = new AbortController();
+    // pollReview returns at once for finished reviews and waits for pending ones.
+    pollReview(reviewId, { signal: controller.signal })
+      .then((data) => setReview(data as unknown as ReviewDetail))
+      .catch((err) => {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "An unexpected error occurred.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [reviewId]);
-
-  const fetchReviewDetail = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await fetch(`/api/reviews/${reviewId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch review details");
-      setReview(data.review);
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleCopy = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);

@@ -1,74 +1,74 @@
-import { NextResponse } from "next/server";
-import { GitHubAppService } from "@/services/GitHubAppService";
-import { db, githubInstallations, users } from "@codeguard/db";
-import { eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
+import { db, githubInstallations, eq } from "@codeguard/db";
+import { GitHubAppService } from "@/services/GitHubAppService";
 
+const INSTALL_STATE_COOKIE = "cg_install_state";
+
+/**
+ * GET /api/github/app/callback — GitHub App "Setup URL".
+ *
+ * Requires "Request user authorization (OAuth) during installation" to be
+ * enabled on the GitHub App so GitHub sends `code` along with
+ * `installation_id`.
+ *
+ * Security: `installation_id` is attacker-controlled. We only link it to the
+ * signed-in user after
+ *   1. the `state` matches the cookie set by /api/github/app/install, and
+ *   2. GitHub confirms (via the user's OAuth token) that this user can access
+ *      that installation.
+ */
 export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const done = (query: string) => {
+    const res = NextResponse.redirect(new URL(`/install?${query}`, req.url));
+    res.cookies.delete({ name: INSTALL_STATE_COOKIE, path: "/api/github/app/callback" });
+    return res;
+  };
+
   try {
-    const url = new URL(req.url);
-    const code = url.searchParams.get("code");
-    const installationId = url.searchParams.get("installation_id");
-    const setupAction = url.searchParams.get("setup_action");
-
-    if (!code || !installationId) {
-      return NextResponse.redirect(
-        new URL("/install?error=missing_params", req.url)
-      );
-    }
-
-    const appService = GitHubAppService.fromEnv();
-
-    // Exchange the code for an installation token
-    const octokitAuth = (await import("@octokit/auth-app")).createAppAuth({
-      appId: process.env.GITHUB_APP_ID!,
-      privateKey: process.env.GITHUB_APP_PRIVATE_KEY!,
-    });
-
-    const { token } = await octokitAuth({
-      type: "installation",
-      installationId: Number(installationId),
-    });
-
-    // Get installation details
-    const octokit = (await import("octokit")).Octokit;
-    const octokitInstance = new octokit({ auth: token });
-    const { data: installation } = await octokitInstance.rest.apps.getInstallation({
-      installation_id: Number(installationId),
-    });
-
-    // Get the current user from Clerk
     const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.redirect(
-        new URL("/install?error=not_authenticated", req.url)
-      );
+    if (!userId) return done("error=not_authenticated");
+
+    const code = url.searchParams.get("code");
+    const installationId = Number(url.searchParams.get("installation_id"));
+    const setupAction = url.searchParams.get("setup_action");
+    const state = url.searchParams.get("state") ?? "";
+    const expectedState = req.headers.get("cookie")?.match(new RegExp(`${INSTALL_STATE_COOKIE}=([a-f0-9]+)`))?.[1] ?? "";
+
+    if (!code || !Number.isInteger(installationId) || installationId <= 0) {
+      return done("error=missing_params");
+    }
+    if (!expectedState || !safeEqual(state, expectedState)) {
+      return done("error=invalid_state");
     }
 
-    // Sync installation to database
-    await appService.handleInstallationEvent(
-      setupAction === "install" ? "created" : "new_permissions_accepted",
-      installation as any
-    );
+    const app = GitHubAppService.fromEnv();
+    if (!(await app.userCanAccessInstallation(code, installationId))) {
+      console.warn(`[github-app-callback] user ${userId} tried to link installation ${installationId} they cannot access`);
+      return done("error=forbidden");
+    }
 
-    // Link installation to user
+    const installation = await app.getInstallation(installationId);
+    if (!installation) return done("error=installation_not_found");
+
+    await app.handleInstallationEvent(setupAction === "update" ? "new_permissions_accepted" : "created", installation);
+
     await db
       .update(githubInstallations)
-      .set({ userId })
-      .where(eq(githubInstallations.installationId, Number(installationId)));
+      .set({ userId, updatedAt: new Date() })
+      .where(eq(githubInstallations.installationId, installationId));
 
-    // If this is a new installation, sync repositories
-    if (setupAction === "install") {
-      await appService.syncInstallationRepositories(Number(installationId));
-    }
-
-    return NextResponse.redirect(
-      new URL("/install?success=true", req.url)
-    );
-  } catch (error: any) {
-    console.error("[GET /api/github/app/callback]", error);
-    return NextResponse.redirect(
-      new URL(`/install?error=${encodeURIComponent(error.message)}`, req.url)
-    );
+    return done("success=true");
+  } catch (err) {
+    console.error("[GET /api/github/app/callback]", err);
+    return done("error=install_failed");
   }
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }

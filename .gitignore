@@ -9,6 +9,12 @@ node_modules
 **/.env
 **/.env.*
 **/*.env
+# …but keep the documented templates
+!.env.example
+!**/.env.example
+!**/.env.sample
+
+PR
 
 # Build & Cache Directories
 .next

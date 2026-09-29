@@ -1,17 +1,19 @@
 {
   "name": "codeguard-ai",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "CodeGuard AI \u2014 AI pull-request reviewer (Next.js web app + Kafka workers)",
   "private": true,
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:worker": "pnpm --filter workers dev",
-    "build": "pnpm -r build",
-    "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
-    "db:generate": "pnpm --filter db drizzle-kit generate",
-    "db:migrate": "pnpm --filter db drizzle-kit migrate"
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "pnpm --filter @codeguard/db db:generate",
+    "db:migrate": "pnpm --filter @codeguard/db db:migrate",
+    "db:check": "pnpm --filter @codeguard/db exec drizzle-kit check"
   },
   "keywords": [],
   "author": "",

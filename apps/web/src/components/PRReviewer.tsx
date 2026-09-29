@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { pollReview } from "@/lib/poll-review";
 import Link from "next/link";
 import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "./ui/SeverityBadge";
 
@@ -32,6 +33,7 @@ interface PullRequestItem {
 interface Issue {
   severity: "critical" | "high" | "medium" | "low";
   category: "security" | "bug" | "performance" | "maintainability" | "style";
+  file: string | null;
   line: number | null;
   message: string;
   suggestion: string | null;
@@ -55,6 +57,10 @@ interface PRReviewResult {
   headSha: string;
 }
 
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 export default function PRReviewer() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [repoSearch, setRepoSearch] = useState<string>("");
@@ -73,24 +79,31 @@ export default function PRReviewer() {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("all");
 
-  useEffect(() => {
-    fetchRepos();
-  }, []);
-
-  const fetchRepos = async () => {
+  const [reposVersion, setReposVersion] = useState(0);
+  const fetchRepos = () => {
     setLoadingRepos(true);
     setError(null);
-    try {
-      const res = await fetch("/api/github/repos");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch repositories");
-      setRepos(data.repos || []);
-    } catch (err: any) {
-      setError(err.message || "Failed to load repositories");
-    } finally {
-      setLoadingRepos(false);
-    }
+    setReposVersion((v) => v + 1);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/github/repos")
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch repositories");
+        if (!cancelled) setRepos(data.repos || []);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err, "Failed to load repositories"));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRepos(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reposVersion]);
 
   const fetchPulls = async (repo: Repo) => {
     setSelectedRepo(repo);
@@ -105,8 +118,8 @@ export default function PRReviewer() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch pull requests");
       setPulls(data.pulls || []);
-    } catch (err: any) {
-      setError(err.message || "Failed to load pull requests");
+    } catch (err) {
+      setError(errorMessage(err, "Failed to load pull requests"));
     } finally {
       setLoadingPulls(false);
     }
@@ -132,9 +145,20 @@ export default function PRReviewer() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to analyze PR diff");
-      setReviewResult(data);
-    } catch (err: any) {
-      setError(err.message || "Error performing PR review");
+      // 202 Accepted: the review runs in the background — poll until done.
+      const review = await pollReview(data.id);
+      setReviewResult({
+        id: review.id,
+        prNumber: data.prNumber,
+        title: data.title,
+        score: review.score ?? 0,
+        summary: review.summary ?? "",
+        issues: review.issues,
+        changedFiles: data.changedFiles,
+        headSha: data.headSha,
+      });
+    } catch (err) {
+      setError(errorMessage(err, "Error performing PR review"));
     } finally {
       setAnalyzing(false);
     }
@@ -149,20 +173,14 @@ export default function PRReviewer() {
       const res = await fetch("/api/github/comment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          owner: selectedRepo.owner,
-          repo: selectedRepo.name,
-          pullNumber: selectedPR.number,
-          score: reviewResult.score,
-          summary: reviewResult.summary,
-          issues: reviewResult.issues,
-        }),
+        // The server posts the stored review — the browser only names it.
+        body: JSON.stringify({ reviewId: reviewResult.id }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to post comment");
       setGithubSuccessUrl(data.htmlUrl || selectedPR.htmlUrl);
-    } catch (err: any) {
-      setError(err.message || "Error posting comment to GitHub");
+    } catch (err) {
+      setError(errorMessage(err, "Error posting comment to GitHub"));
     } finally {
       setPostingComment(false);
     }
@@ -474,9 +492,9 @@ export default function PRReviewer() {
                       <SeverityBadge severity={issue.severity} />
                       <CategoryBadge category={issue.category} />
                     </div>
-                    {issue.line !== null && (
-                      <span className="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-                        Line {issue.line}
+                    {(issue.file || issue.line !== null) && (
+                      <span className="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 break-all">
+                        {issue.file ?? "Line"}{issue.file && issue.line !== null ? `:${issue.line}` : issue.line !== null ? ` ${issue.line}` : ""}
                       </span>
                     )}
                   </div>

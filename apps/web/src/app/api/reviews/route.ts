@@ -1,23 +1,17 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { ReviewPersistenceService, UserService } from "@/services";
+import { handleApiError, jsonError } from "@/lib/api";
 
 export async function GET() {
   try {
     const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return jsonError(401, "Unauthorized");
 
-    // Sync Clerk user into DB on every authenticated list request
     await new UserService().syncCurrentUser();
-
-    const persistence = new ReviewPersistenceService();
-    const userReviews = await persistence.getUserReviews(userId);
-
-    return NextResponse.json({ reviews: userReviews });
-  } catch (error: any) {
-    console.error("[GET /api/reviews]", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const reviews = await new ReviewPersistenceService().getUserReviews(userId);
+    return NextResponse.json({ reviews });
+  } catch (err) {
+    return handleApiError(err, "GET /api/reviews");
   }
 }

@@ -1,17 +1,30 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useUser, SignInButton } from "@clerk/nextjs";
 import PRReviewer from "./PRReviewer";
+import { pollReview } from "@/lib/poll-review";
 import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "./ui/SeverityBadge";
 
 interface Issue {
   severity: "critical" | "high" | "medium" | "low";
   category: "security" | "bug" | "performance" | "maintainability" | "style";
+  file?: string | null;
   line: number | null;
   message: string;
   suggestion: string | null;
+}
+
+interface HistoryItem {
+  id: string;
+  title: string | null;
+  language: string | null;
+  score: number | null;
+  status: string;
+  reviewType: string;
+  createdAt: string;
+  issues: Issue[];
 }
 
 interface ReviewResult {
@@ -47,30 +60,32 @@ export default function ReviewerDashboard() {
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<any[]>([]);
-  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"snippet" | "pr">("snippet");
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("all");
 
-  const fetchHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    try {
-      const res = await fetch("/api/reviews");
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data.reviews || []);
-      }
-    } catch (e) {
-      console.error("Failed to load review history:", e);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const refreshHistory = () => setHistoryVersion((v) => v + 1);
 
   useEffect(() => {
-    if (isSignedIn) fetchHistory();
-  }, [isSignedIn, fetchHistory]);
+    if (!isSignedIn) return;
+    let cancelled = false;
+    fetch("/api/reviews")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setHistory(data.reviews || []);
+      })
+      .catch((e) => console.error("Failed to load review history:", e))
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn, historyVersion]);
 
   const handleReview = async () => {
     if (loading) return;
@@ -92,10 +107,18 @@ export default function ReviewerDashboard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to analyze code");
-      setResult(data);
-      if (isSignedIn) fetchHistory();
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+      // The review runs in the background — wait for it to finish.
+      const review = await pollReview(data.id);
+      setResult({
+        id: review.id,
+        score: review.score ?? 0,
+        summary: review.summary ?? "",
+        issues: review.issues,
+        createdAt: review.createdAt,
+      });
+      if (isSignedIn) refreshHistory();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
@@ -126,7 +149,7 @@ export default function ReviewerDashboard() {
           <div>
             <h1 className="text-2xl font-bold text-white tracking-tight">CodeGuard AI</h1>
             <p className="text-xs text-zinc-400">
-              Static code & PR review powered by Llama 3.3 70B · Graph-aware diff selection · pgvector RAG
+              AI code & PR review · Inline GitHub comments · Graph-aware diff selection · pgvector RAG
             </p>
           </div>
         </div>
@@ -248,7 +271,10 @@ export default function ReviewerDashboard() {
                     Recent Reviews
                   </h3>
                   <button
-                    onClick={fetchHistory}
+                    onClick={() => {
+                      setHistoryLoading(true);
+                      refreshHistory();
+                    }}
                     disabled={historyLoading}
                     className="text-[10px] text-zinc-500 hover:text-zinc-300 transition"
                   >

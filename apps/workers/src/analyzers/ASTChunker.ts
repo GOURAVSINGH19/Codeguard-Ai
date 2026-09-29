@@ -1,4 +1,7 @@
 import Parser from "web-tree-sitter";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 export interface ASTChunk {
   content: string;
@@ -12,7 +15,8 @@ interface LanguageConfig {
   name: string;
   extensions: string[];
   query: string;  // Tree-sitter query for extracting nodes
-  parserModule: () => Promise<any>;
+  /** Package-relative path of the grammar's prebuilt .wasm file. */
+  wasm: string;
 }
 
 /**
@@ -44,8 +48,23 @@ export class ASTChunker {
     const languageConfigs: LanguageConfig[] = [
       {
         name: "typescript",
-        extensions: [".ts", ".tsx"],
-        parserModule: () => import("tree-sitter-typescript").then((m) => m.typescript),
+        extensions: [".ts", ".mts", ".cts"],
+        wasm: "tree-sitter-typescript/tree-sitter-typescript.wasm",
+        query: `
+          (function_declaration name: (identifier) @name) @function
+          (function_expression name: (identifier) @name) @function
+          (arrow_function) @function
+          (method_definition name: (property_identifier) @name) @method
+          (class_declaration name: (type_identifier) @name) @class
+          (interface_declaration name: (type_identifier) @name) @interface
+          (type_alias_declaration name: (type_identifier) @name) @type
+          (variable_declarator name: (identifier) @name) @variable
+        `,
+      },
+      {
+        name: "tsx",
+        extensions: [".tsx"],
+        wasm: "tree-sitter-typescript/tree-sitter-tsx.wasm",
         query: `
           (function_declaration name: (identifier) @name) @function
           (function_expression name: (identifier) @name) @function
@@ -60,7 +79,7 @@ export class ASTChunker {
       {
         name: "javascript",
         extensions: [".js", ".jsx", ".mjs", ".cjs"],
-        parserModule: () => import("tree-sitter-typescript").then((m) => m.javascript),
+        wasm: "tree-sitter-javascript/tree-sitter-javascript.wasm",
         query: `
           (function_declaration name: (identifier) @name) @function
           (function_expression name: (identifier) @name) @function
@@ -73,17 +92,16 @@ export class ASTChunker {
       {
         name: "python",
         extensions: [".py"],
-        parserModule: () => import("tree-sitter-python"),
+        wasm: "tree-sitter-python/tree-sitter-python.wasm",
         query: `
           (function_definition name: (identifier) @name) @function
           (class_definition name: (identifier) @name) @class
-          (async_function_definition name: (identifier) @name) @function
         `,
       },
       {
         name: "go",
         extensions: [".go"],
-        parserModule: () => import("tree-sitter-go"),
+        wasm: "tree-sitter-go/tree-sitter-go.wasm",
         query: `
           (function_declaration name: (identifier) @name) @function
           (method_declaration name: (field_identifier) @name) @method
@@ -93,7 +111,7 @@ export class ASTChunker {
       {
         name: "rust",
         extensions: [".rs"],
-        parserModule: () => import("tree-sitter-rust"),
+        wasm: "tree-sitter-rust/tree-sitter-rust.wasm",
         query: `
           (function_item name: (identifier) @name) @function
           (struct_item name: (type_identifier) @name) @class
@@ -105,7 +123,7 @@ export class ASTChunker {
       {
         name: "java",
         extensions: [".java"],
-        parserModule: () => import("tree-sitter-java"),
+        wasm: "tree-sitter-java/tree-sitter-java.wasm",
         query: `
           (method_declaration name: (identifier) @name) @method
           (class_declaration name: (identifier) @name) @class
@@ -116,7 +134,7 @@ export class ASTChunker {
       {
         name: "cpp",
         extensions: [".cpp", ".cc", ".cxx", ".hpp", ".h"],
-        parserModule: () => import("tree-sitter-cpp"),
+        wasm: "tree-sitter-cpp/tree-sitter-cpp.wasm",
         query: `
           (function_definition declarator: (function_declarator declarator: (identifier) @name)) @function
           (class_specifier name: (type_identifier) @name) @class
@@ -128,7 +146,9 @@ export class ASTChunker {
     for (const config of languageConfigs) {
       try {
         const parser = new Parser();
-        const language = await config.parserModule();
+        // web-tree-sitter needs the grammar's WASM build (the native Node
+        // bindings the old code imported are not compatible with it).
+        const language = await Parser.Language.load(require.resolve(config.wasm));
         parser.setLanguage(language);
         this.parsers.set(config.name, parser);
         this.languages.set(config.name, config);
@@ -179,43 +199,39 @@ export class ASTChunker {
 
     try {
       const tree = parser.parse(content);
-      const query = new Parser.Query(config.query);
+      const query = parser.getLanguage().query(config.query);
       const captures = query.captures(tree.rootNode);
 
       const chunks: ASTChunk[] = [];
 
-      // Group captures by the main node (@function, @class, @method, etc.)
-      const nodeGroups = new Map<Parser.SyntaxNode, { type: string; name: string }>();
+      // Group captures by the main node (@function, @class, @method, etc.).
+      // Keyed by node.id: web-tree-sitter returns a NEW wrapper object for the
+      // same node on every access, so object keys would never match and each
+      // declaration was emitted twice (once unnamed, once as a "block").
+      const nodeGroups = new Map<number, { node: Parser.SyntaxNode; type: string; name: string }>();
 
       for (const capture of captures) {
         const node = capture.node;
         const captureName = capture.name;
 
         if (captureName === "name") {
-          // This is a name node, associate it with its parent
           const parent = node.parent;
           if (parent) {
-            const existing = nodeGroups.get(parent);
-            nodeGroups.set(parent, {
-              type: existing?.type || "",
-              name: node.text,
-            });
+            const existing = nodeGroups.get(parent.id);
+            nodeGroups.set(parent.id, { node: existing?.node ?? parent, type: existing?.type || "", name: node.text });
           }
         } else if (captureName.endsWith("function") || captureName.endsWith("class") ||
                    captureName.endsWith("method") || captureName.endsWith("interface") ||
                    captureName.endsWith("type") || captureName.endsWith("variable") ||
                    captureName.endsWith("block")) {
-          // This is a main node type
-          const existing = nodeGroups.get(node);
-          nodeGroups.set(node, {
-            type: captureName,
-            name: existing?.name || "",
-          });
+          const existing = nodeGroups.get(node.id);
+          nodeGroups.set(node.id, { node, type: captureName, name: existing?.name || "" });
         }
       }
 
       // Convert grouped nodes to chunks
-      for (const [node, info] of nodeGroups) {
+      for (const info of nodeGroups.values()) {
+        const node = info.node;
         const startLine = node.startPosition.row + 1;
         const endLine = node.endPosition.row + 1;
         const nodeContent = node.text;

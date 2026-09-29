@@ -1,3 +1,10 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Native build scripts we deliberately skip (moved here from apps/web — a
+# nested pnpm-workspace.yaml/pnpm-lock.yaml inside the workspace is ignored by
+# pnpm and only causes confusion).
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver

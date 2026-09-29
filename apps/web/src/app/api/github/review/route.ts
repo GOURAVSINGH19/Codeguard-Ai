@@ -1,83 +1,42 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { AIReviewService, GitHubService, ReviewPersistenceService, UserService } from "@/services";
+import { PRReviewRequestSchema } from "@codeguard/types";
+import { GitHubService, ReviewService, UserService } from "@/services";
+import { handleApiError, jsonError } from "@/lib/api";
 
+/**
+ * POST /api/github/review — start an AI review of a pull request.
+ *
+ * Returns 202 with the review id plus PR metadata for the UI. The review runs
+ * after the response is sent; poll GET /api/reviews/:id. Requesting the same
+ * commit twice returns the existing review instead of paying for a new one.
+ */
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Sync user to DB on every authenticated PR review
-  await new UserService().syncCurrentUser();
-
-  const body = await req.json();
-  const { owner, repo, pullNumber } = body;
-  const prNum = parseInt(pullNumber, 10);
-
-  if (!owner || !repo || isNaN(prNum)) {
-    return NextResponse.json(
-      { error: "owner, repo, and pullNumber are required" },
-      { status: 400 }
-    );
-  }
-
-  const persistence = new ReviewPersistenceService();
-  let pendingReviewId: string | null = null;
-
   try {
-    // 1. Fetch PR details + diff from GitHub
+    const { userId } = await auth();
+    if (!userId) return jsonError(401, "Unauthorized");
+
+    const parsed = PRReviewRequestSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) return jsonError(400, "owner, repo and pullNumber are required");
+    const { owner, repo, pullNumber } = parsed.data;
+
+    await new UserService().syncCurrentUser();
+
     const github = await GitHubService.fromCurrentUser();
-    const prDetail = await github.getPRDetail(owner, repo, prNum);
-
-    // 2. Upsert repository + PR records, create pending review
-    const repoRecord = await persistence.ensureRepository(prDetail);
-    const prRecord = await persistence.ensurePullRequest(prDetail, repoRecord.id);
-    const pendingReview = await persistence.createPendingPRReview(
-      userId,
-      prRecord.id,
-      prDetail
-    );
-    pendingReviewId = pendingReview.id;
-
-    // 3. Run AI review
-    const aiService = AIReviewService.fromEnv();
-    const reviewOutput = await aiService.reviewPRDiff(
-      prDetail.diffContext,
-      prDetail.title,
-      prDetail.body
-    );
-
-    // 4. Persist completed review + issues
-    const firstFilename = prDetail.files[0]?.filename ?? "PR diff";
-    const completed = await persistence.completePRReview(
-      pendingReview.id,
-      reviewOutput,
-      firstFilename
-    );
-
-    return NextResponse.json({
-      id: completed.id,
-      prNumber: prNum,
-      title: prDetail.title,
-      score: reviewOutput.score,
-      summary: reviewOutput.summary,
-      issues: reviewOutput.issues,
-      changedFiles: prDetail.files,
-      headSha: prDetail.headSha,
-      createdAt: completed.createdAt,
-    });
-  } catch (error: any) {
-    console.error("[POST /api/github/review]", error);
-
-    // Best-effort: mark pending review as failed so status stays consistent
-    if (pendingReviewId) {
-      await persistence.failReview(pendingReviewId).catch(() => null);
-    }
+    const pr = await github.getPRDetail(owner, repo, pullNumber);
+    const started = await new ReviewService().startPRReview(userId, pr);
 
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
+      {
+        ...started,
+        prNumber: pr.number,
+        title: pr.title,
+        headSha: pr.headSha,
+        changedFiles: pr.files,
+      },
+      { status: 202 }
     );
+  } catch (err) {
+    return handleApiError(err, "POST /api/github/review");
   }
 }

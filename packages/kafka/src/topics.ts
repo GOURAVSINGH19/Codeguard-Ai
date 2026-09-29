@@ -37,6 +37,15 @@ export const TOPICS = {
    * Payload: { owner, repo, repositoryId, changedFiles, headSha, pusher }
    */
   INDEX_INCREMENTAL: "codeguard.index.incremental",
+
+  /**
+   * Dead-letter topics. A message lands here (with the error attached) when
+   * it cannot be parsed or keeps failing after retries, instead of being
+   * silently dropped or blocking its partition.
+   */
+  WEBHOOK_RECEIVED_DLQ: "codeguard.webhook.received.dlq",
+  REVIEW_REQUESTED_DLQ: "codeguard.review.requested.dlq",
+  INDEX_INCREMENTAL_DLQ: "codeguard.index.incremental.dlq",
 } as const;
 
 export type TopicName = (typeof TOPICS)[keyof typeof TOPICS];

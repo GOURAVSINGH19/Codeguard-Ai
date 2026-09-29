@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getEnv, MissingConfigError } from "@codeguard/config";
 
 // Must match the vector dimension in packages/db/schema/code-chunks.ts
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -26,12 +27,9 @@ export class EmbeddingService {
   }
 
   static fromEnv(): EmbeddingService {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = getEnv().OPENAI_API_KEY;
     if (!apiKey) {
-      throw new Error(
-        "OPENAI_API_KEY is required for RAG embeddings. " +
-          "Set it in apps/workers/.env"
-      );
+      throw new MissingConfigError(["OPENAI_API_KEY"], "RAG embeddings");
     }
     return new EmbeddingService(apiKey);
   }

@@ -1,0 +1,9 @@
+# Normalize line endings: LF in the repository and working tree on every OS.
+# (Windows editors had rewritten ~90 files to CRLF, making every file show as
+# modified with no real change.)
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.wasm binary

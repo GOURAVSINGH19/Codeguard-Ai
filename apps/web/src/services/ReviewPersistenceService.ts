@@ -4,24 +4,27 @@ import {
   reviewComments,
   repositories,
   pullRequests,
+  eq,
+  and,
+  desc,
+  gte,
+  inArray,
+  count,
 } from "@codeguard/db";
-import { eq, and, desc } from "drizzle-orm";
-import type { ReviewOutput } from "@codeguard/types";
+import type { ReviewIssue } from "@codeguard/types";
+import type { ReviewRun } from "@codeguard/review-engine";
 import type { GitHubPRDetail } from "./GitHubService";
 
-// ─── Input / return types ────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface SnippetReviewInput {
-  userId: string;
-  code: string;
-  language: string;
-  title?: string;
-  reviewOutput: ReviewOutput;
-}
-
-export interface PRReviewInitInput {
-  userId: string;
-  prDetail: GitHubPRDetail;
+export interface ReviewIssueItem {
+  id?: string;
+  severity: string;
+  category: string;
+  file: string | null;
+  line: number | null;
+  message: string;
+  suggestion: string | null;
 }
 
 export interface ReviewListItem {
@@ -35,297 +38,285 @@ export interface ReviewListItem {
   issues: ReviewIssueItem[];
 }
 
-export interface ReviewIssueItem {
-  id?: string;
-  severity: string;
-  category: string;
-  line: number | null;
-  message: string;
-  suggestion: string | null;
-}
-
 export interface ReviewDetail extends ReviewListItem {
   codeSnippet: string | null;
   overallScore: string | null;
   summary: string | null;
   model: string | null;
+  headSha: string | null;
+  pullRequest: { owner: string; repo: string; number: number; title: string } | null;
+  /** Safe subset of metadata for the UI (never raw errors). */
+  details: { tokens: number | null; durationMs: number | null; githubUrl: string | null } | null;
 }
 
+/** Placeholder file path for snippet reviews / PR issues without a file. */
+const SNIPPET_PATH = "snippet";
+const NO_FILE_PATH = "PR";
+
 /**
- * ReviewPersistenceService
- *
- * Single owner of all Drizzle ORM / DB logic for the review lifecycle.
- * This is the ONLY file in apps/web that imports from @codeguard/db.
- *
- * Enforces:
- * - INV-2: review status only moves forward (pending → completed/failed)
- * - INV-6: reviewComments always reference a valid reviewId
- * - INV-7: pullRequests always reference a valid repositoryId
+ * ReviewPersistenceService — every DB read/write for the review lifecycle in
+ * apps/web. Status only moves forward: pending → completed | failed.
  */
 export class ReviewPersistenceService {
-  // ─── Snippet review ─────────────────────────────────────────────────────
+  // ─── Snippet reviews ─────────────────────────────────────────────────────
 
-  /**
-   * Persist a completed snippet review + its issues atomically.
-   * Returns the saved review id + createdAt for the API response.
-   */
-  async saveSnippetReview(input: SnippetReviewInput) {
-    const { userId, code, language, title, reviewOutput } = input;
-
-    const [insertedReview] = await db
+  async createPendingSnippetReview(input: { userId: string; code: string; language: string; title?: string }) {
+    const [row] = await db
       .insert(reviews)
       .values({
-        userId,
-        title: title || `${language.toUpperCase()} Code Review`,
-        codeSnippet: code,
-        language,
-        score: reviewOutput.score,
-        overallScore: `${reviewOutput.score.toFixed(1)}/10`,
-        summary: reviewOutput.summary,
-        status: "completed",
+        userId: input.userId,
+        title: input.title || `${input.language.toUpperCase()} Code Review`,
+        codeSnippet: input.code,
+        language: input.language,
+        status: "pending",
         reviewType: "paste_code",
-        model: process.env.GROQ_MODEL ?? null,
+        startedAt: new Date(),
       })
-      .returning();
-
-    await this.insertIssues(insertedReview.id, "snippet", reviewOutput);
-
-    return { id: insertedReview.id, createdAt: insertedReview.createdAt };
+      .returning({ id: reviews.id, createdAt: reviews.createdAt });
+    return row;
   }
 
-  // ─── PR review lifecycle ─────────────────────────────────────────────────
+  // ─── PR reviews ──────────────────────────────────────────────────────────
 
-  /**
-   * Upsert the repository record for this PR's base repo.
-   * Returns the internal UUID for use in the PR upsert.
-   */
-  async ensureRepository(prDetail: GitHubPRDetail) {
-    const existing = await db
-      .select()
-      .from(repositories)
-      .where(eq(repositories.githubRepoId, prDetail.repoId))
-      .limit(1);
-
-    if (existing[0]) return existing[0];
-
-    const [created] = await db
+  async ensureRepository(pr: GitHubPRDetail) {
+    const [owner, name] = pr.repoFullName.split("/");
+    const [row] = await db
       .insert(repositories)
       .values({
-        githubRepoId: prDetail.repoId,
-        fullName: prDetail.repoFullName,
-        owner: prDetail.repoFullName.split("/")[0],
-        name: prDetail.repoFullName.split("/")[1],
-        defaultBranch: prDetail.repoDefaultBranch,
-        isPrivate: prDetail.repoIsPrivate,
-        language: prDetail.repoLanguage,
-        cloneUrl: prDetail.repoCloneUrl,
-        htmlUrl: prDetail.repoHtmlUrl,
+        githubRepoId: pr.repoId,
+        fullName: pr.repoFullName,
+        owner,
+        name,
+        defaultBranch: pr.repoDefaultBranch,
+        isPrivate: pr.repoIsPrivate,
+        language: pr.repoLanguage,
+        cloneUrl: pr.repoCloneUrl,
+        htmlUrl: pr.repoHtmlUrl,
+      })
+      .onConflictDoUpdate({
+        target: repositories.githubRepoId,
+        set: { fullName: pr.repoFullName, defaultBranch: pr.repoDefaultBranch, updatedAt: new Date() },
       })
       .returning();
-
-    return created;
+    return row;
   }
 
-  /**
-   * Upsert the pull request record.
-   * Returns the internal UUID for use in the review insert.
-   */
-  async ensurePullRequest(prDetail: GitHubPRDetail, repositoryId: string) {
-    const existing = await db
-      .select()
-      .from(pullRequests)
-      .where(
-        and(
-          eq(pullRequests.repositoryId, repositoryId),
-          eq(pullRequests.prNumber, prDetail.number)
-        )
-      )
-      .limit(1);
-
-    if (existing[0]) return existing[0];
-
-    const [created] = await db
+  async ensurePullRequest(pr: GitHubPRDetail, repositoryId: string) {
+    const values = {
+      repositoryId,
+      githubPrId: pr.id,
+      prNumber: pr.number,
+      title: pr.title,
+      body: pr.body ?? "",
+      state: pr.state === "open" ? ("open" as const) : ("closed" as const),
+      headBranch: pr.headBranch,
+      baseBranch: pr.baseBranch,
+      headSha: pr.headSha,
+      baseSha: pr.baseSha,
+      authorLogin: pr.authorLogin,
+      additions: pr.additions,
+      deletions: pr.deletions,
+      changedFiles: pr.changedFiles,
+    };
+    const [row] = await db
       .insert(pullRequests)
-      .values({
-        repositoryId,
-        githubPrId: prDetail.id,
-        prNumber: prDetail.number,
-        title: prDetail.title,
-        body: prDetail.body ?? "",
-        state: prDetail.state === "open" ? "open" : "closed",
-        headBranch: prDetail.headBranch,
-        baseBranch: prDetail.baseBranch,
-        headSha: prDetail.headSha,
-        baseSha: prDetail.baseSha,
-        authorLogin: prDetail.authorLogin,
-        additions: prDetail.additions,
-        deletions: prDetail.deletions,
-        changedFiles: prDetail.changedFiles,
+      .values(values)
+      .onConflictDoUpdate({
+        target: [pullRequests.repositoryId, pullRequests.prNumber],
+        set: {
+          title: values.title,
+          body: values.body,
+          state: values.state,
+          headSha: values.headSha,
+          baseSha: values.baseSha,
+          additions: values.additions,
+          deletions: values.deletions,
+          changedFiles: values.changedFiles,
+          updatedAt: new Date(),
+        },
       })
       .returning();
-
-    return created;
+    return row;
   }
 
   /**
-   * Insert a pending review record before the AI call starts.
-   * Returns the review id so we can update it later.
+   * Create the pending review for (PR, head SHA, user) — or return the one that
+   * already exists, so a double click or a refresh doesn't pay for a second
+   * LLM call. `created` tells the caller whether to start the work.
    */
-  async createPendingPRReview(
-    userId: string,
-    pullRequestId: string,
-    prDetail: GitHubPRDetail
-  ) {
-    const [pending] = await db
+  async claimPRReview(userId: string, pullRequestId: string, pr: GitHubPRDetail) {
+    const [created] = await db
       .insert(reviews)
       .values({
         userId,
         pullRequestId,
-        title: `PR #${prDetail.number}: ${prDetail.title}`,
-        codeSnippet: `PR #${prDetail.number} Diff (${prDetail.changedFiles} files changed, +${prDetail.additions} -${prDetail.deletions})`,
-        language: prDetail.repoLanguage ?? "code",
+        headSha: pr.headSha,
+        title: `PR #${pr.number}: ${pr.title}`,
+        codeSnippet: `PR #${pr.number} diff (${pr.changedFiles} files changed, +${pr.additions} -${pr.deletions})`,
+        language: pr.repoLanguage ?? "code",
         status: "pending",
-        reviewType: "automated",
-        model: process.env.GROQ_MODEL ?? null,
+        reviewType: "ai_suggested",
+        startedAt: new Date(),
       })
-      .returning();
+      .onConflictDoNothing()
+      .returning({ id: reviews.id, status: reviews.status, createdAt: reviews.createdAt });
 
-    return pending;
+    if (created) return { review: created, created: true as const };
+
+    const [existing] = await db
+      .select({ id: reviews.id, status: reviews.status, createdAt: reviews.createdAt })
+      .from(reviews)
+      .where(and(eq(reviews.pullRequestId, pullRequestId), eq(reviews.headSha, pr.headSha), eq(reviews.userId, userId), inArray(reviews.status, ["pending", "in_progress", "completed"])))
+      .orderBy(desc(reviews.createdAt))
+      .limit(1);
+    return { review: existing, created: false as const };
   }
 
-  /**
-   * Mark a review as completed and persist its AI-generated issues.
-   */
-  async completePRReview(
+  // ─── Completion ──────────────────────────────────────────────────────────
+
+  async completeReview(
     reviewId: string,
-    reviewOutput: ReviewOutput,
-    firstFilename: string
+    run: ReviewRun,
+    opts: { kind: "snippet" | "pr"; metadata?: Record<string, unknown> }
   ) {
-    const [updated] = await db
+    await db
       .update(reviews)
       .set({
         status: "completed",
-        score: reviewOutput.score,
-        overallScore: `${reviewOutput.score.toFixed(1)}/10`,
-        summary: reviewOutput.summary,
+        score: run.score,
+        overallScore: `${run.score.toFixed(1)}/10`,
+        summary: run.summary,
+        model: run.model,
         completedAt: new Date(),
         updatedAt: new Date(),
+        metadata: { provider: run.provider, usage: run.usage, durationMs: run.durationMs, ...opts.metadata },
       })
-      .where(eq(reviews.id, reviewId))
-      .returning();
+      .where(eq(reviews.id, reviewId));
 
-    await this.insertIssues(reviewId, firstFilename, reviewOutput);
-
-    return updated;
+    await this.insertIssues(reviewId, run.issues, opts.kind === "snippet" ? SNIPPET_PATH : NO_FILE_PATH);
   }
 
-  /**
-   * Mark a review as failed — called in catch blocks to keep status consistent.
-   */
-  async failReview(reviewId: string) {
+  async failReview(reviewId: string, error?: unknown) {
     await db
       .update(reviews)
-      .set({ status: "failed", updatedAt: new Date() })
+      .set({
+        status: "failed",
+        updatedAt: new Date(),
+        metadata: error ? { error: String((error as Error)?.message ?? error).slice(0, 500) } : undefined,
+      })
       .where(eq(reviews.id, reviewId));
   }
 
-  // ─── Read operations ─────────────────────────────────────────────────────
+  async mergeMetadata(reviewId: string, patch: Record<string, unknown>) {
+    const [row] = await db.select({ metadata: reviews.metadata }).from(reviews).where(eq(reviews.id, reviewId)).limit(1);
+    await db
+      .update(reviews)
+      .set({ metadata: { ...((row?.metadata as Record<string, unknown>) ?? {}), ...patch }, updatedAt: new Date() })
+      .where(eq(reviews.id, reviewId));
+  }
 
-  /**
-   * Return the last 20 reviews for a user, with their issues.
-   */
+  // ─── Rate limiting ───────────────────────────────────────────────────────
+
+  async countReviewsSince(userId: string, since: Date): Promise<number> {
+    const [row] = await db
+      .select({ n: count() })
+      .from(reviews)
+      .where(and(eq(reviews.userId, userId), gte(reviews.createdAt, since)));
+    return Number(row?.n ?? 0);
+  }
+
+  // ─── Reads ───────────────────────────────────────────────────────────────
+
+  /** Last 20 reviews for a user, with issues — two queries, not 1 + N. */
   async getUserReviews(userId: string): Promise<ReviewListItem[]> {
-    const userReviews = await db
+    const rows = await db
       .select()
       .from(reviews)
       .where(eq(reviews.userId, userId))
       .orderBy(desc(reviews.createdAt))
       .limit(20);
-
-    return Promise.all(
-      userReviews.map(async (rev) => {
-        const comments = await db
-          .select()
-          .from(reviewComments)
-          .where(eq(reviewComments.reviewId, rev.id));
-
-        return {
-          id: rev.id,
-          title: rev.title,
-          language: rev.language,
-          score: rev.score,
-          status: rev.status,
-          reviewType: rev.reviewType,
-          createdAt: rev.createdAt,
-          issues: comments.map((c) => ({
-            severity: c.severity,
-            category: c.category,
-            line: c.lineNumber ?? null,
-            message: c.body || c.comment || "",
-            suggestion: c.suggestion ?? null,
-          })),
-        };
-      })
-    );
-  }
-
-  /**
-   * Return a single review with its issues, scoped to the requesting user.
-   * Returns null if not found or belongs to another user.
-   */
-  async getReviewById(
-    reviewId: string,
-    userId: string
-  ): Promise<ReviewDetail | null> {
-    const [review] = await db
-      .select()
-      .from(reviews)
-      .where(and(eq(reviews.id, reviewId), eq(reviews.userId, userId)))
-      .limit(1);
-
-    if (!review) return null;
+    if (rows.length === 0) return [];
 
     const comments = await db
       .select()
       .from(reviewComments)
-      .where(eq(reviewComments.reviewId, review.id));
+      .where(inArray(reviewComments.reviewId, rows.map((r) => r.id)));
+    const byReview = new Map<string, typeof comments>();
+    for (const c of comments) {
+      const list = byReview.get(c.reviewId) ?? [];
+      list.push(c);
+      byReview.set(c.reviewId, list);
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      language: r.language,
+      score: r.score,
+      status: r.status,
+      reviewType: r.reviewType,
+      createdAt: r.createdAt,
+      issues: (byReview.get(r.id) ?? []).map(toIssueItem),
+    }));
+  }
+
+  /** A single review scoped to its owner; null if missing or someone else's. */
+  async getReviewById(reviewId: string, userId: string): Promise<ReviewDetail | null> {
+    const [row] = await db
+      .select({
+        review: reviews,
+        prNumber: pullRequests.prNumber,
+        prTitle: pullRequests.title,
+        repoOwner: repositories.owner,
+        repoName: repositories.name,
+      })
+      .from(reviews)
+      .leftJoin(pullRequests, eq(reviews.pullRequestId, pullRequests.id))
+      .leftJoin(repositories, eq(pullRequests.repositoryId, repositories.id))
+      .where(and(eq(reviews.id, reviewId), eq(reviews.userId, userId)))
+      .limit(1);
+    if (!row) return null;
+
+    const r = row.review;
+    const comments = await db.select().from(reviewComments).where(eq(reviewComments.reviewId, r.id));
+    const meta = (r.metadata ?? {}) as { usage?: { totalTokens?: number }; durationMs?: number; github?: { url?: string } };
 
     return {
-      id: review.id,
-      title: review.title,
-      codeSnippet: review.codeSnippet,
-      language: review.language,
-      score: review.score,
-      overallScore: review.overallScore,
-      summary: review.summary,
-      status: review.status,
-      reviewType: review.reviewType,
-      model: review.model,
-      createdAt: review.createdAt,
-      issues: comments.map((c) => ({
-        id: c.id,
-        severity: c.severity,
-        category: c.category,
-        line: c.lineNumber ?? null,
-        message: c.body || c.comment || "",
-        suggestion: c.suggestion ?? null,
-      })),
+      id: r.id,
+      title: r.title,
+      codeSnippet: r.codeSnippet,
+      language: r.language,
+      score: r.score,
+      overallScore: r.overallScore,
+      summary: r.summary,
+      status: r.status,
+      reviewType: r.reviewType,
+      model: r.model,
+      headSha: r.headSha,
+      createdAt: r.createdAt,
+      issues: comments.map(toIssueItem),
+      pullRequest:
+        row.prNumber != null && row.repoOwner && row.repoName
+          ? { owner: row.repoOwner, repo: row.repoName, number: row.prNumber, title: row.prTitle ?? "" }
+          : null,
+      details: {
+        tokens: meta.usage?.totalTokens ?? null,
+        durationMs: meta.durationMs ?? null,
+        githubUrl: meta.github?.url ?? null,
+      },
     };
   }
 
-  // ─── Private helpers ──────────────────────────────────────────────────────
+  // ─── Private ─────────────────────────────────────────────────────────────
 
-  private async insertIssues(
-    reviewId: string,
-    filePath: string,
-    reviewOutput: ReviewOutput
-  ) {
-    if (reviewOutput.issues.length === 0) return;
-
+  private async insertIssues(reviewId: string, issues: ReviewIssue[], fallbackPath: string) {
+    if (issues.length === 0) return;
     await db.insert(reviewComments).values(
-      reviewOutput.issues.map((issue) => ({
+      issues.map((issue) => ({
         reviewId,
-        filePath,
+        // Each issue keeps its own file (previously every issue was saved
+        // against the first changed file).
+        filePath: issue.file ?? fallbackPath,
         lineNumber: issue.line ?? undefined,
         lineStart: issue.line ?? undefined,
         lineEnd: issue.line ?? undefined,
@@ -337,4 +328,17 @@ export class ReviewPersistenceService {
       }))
     );
   }
+}
+
+function toIssueItem(c: typeof reviewComments.$inferSelect): ReviewIssueItem {
+  const file = c.filePath && c.filePath !== SNIPPET_PATH && c.filePath !== NO_FILE_PATH ? c.filePath : null;
+  return {
+    id: c.id,
+    severity: c.severity,
+    category: c.category,
+    file,
+    line: c.lineNumber ?? null,
+    message: c.body || c.comment || "",
+    suggestion: c.suggestion ?? null,
+  };
 }

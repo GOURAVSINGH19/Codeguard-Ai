@@ -1,24 +1,14 @@
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { db, githubInstallations, repositories } from "@codeguard/db";
-import { eq } from "drizzle-orm";
-import crypto from "crypto";
+import { db, githubInstallations, repositories, eq } from "@codeguard/db";
+import { getGitHubAppConfig, getGitHubAppOAuthConfig } from "@codeguard/config";
+import type { GitHubAppConfig } from "@codeguard/config";
 
-export interface GitHubAppConfig {
-  appId: string;
-  privateKey: string;
-  webhookSecret: string;
-}
+export type { GitHubAppConfig };
 
 export interface InstallationToken {
   token: string;
   expiresAt: string;
-  repositories?: Array<{
-    id: number;
-    name: string;
-    full_name: string;
-    private: boolean;
-  }>;
 }
 
 export interface AppInstallation {
@@ -26,124 +16,100 @@ export interface AppInstallation {
   account: {
     login: string;
     id: number;
-    type: "User" | "Organization";
+    type: "User" | "Organization" | string;
     avatar_url: string;
-  };
+  } | null;
   repository_selection: "all" | "selected";
-  permissions: Record<string, string>;
+  permissions: Record<string, string | undefined>;
   events: string[];
 }
+
+export type InstallationAction = "created" | "deleted" | "suspend" | "unsuspend" | "new_permissions_accepted";
 
 /**
  * GitHubAppService
  *
- * Handles GitHub App authentication and installation management.
- * Uses @octokit/auth-app for JWT-based authentication flow.
+ * GitHub App authentication and installation management. App-level calls
+ * (get/delete installation) use the app JWT; repository calls use a
+ * short-lived installation token.
  */
 export class GitHubAppService {
-  private readonly config: GitHubAppConfig;
-
-  constructor(config: GitHubAppConfig) {
-    this.config = config;
-  }
+  constructor(private readonly config: GitHubAppConfig) {}
 
   static fromEnv(): GitHubAppService {
-    const appId = process.env.GITHUB_APP_ID;
-    const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
-    const webhookSecret = process.env.GITHUB_APP_WEBHOOK_SECRET;
-
-    if (!appId || !privateKey || !webhookSecret) {
-      throw new Error(
-        "GitHub App configuration missing. Set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_APP_WEBHOOK_SECRET in your environment."
-      );
-    }
-
-    return new GitHubAppService({ appId, privateKey, webhookSecret });
+    return new GitHubAppService(getGitHubAppConfig());
   }
 
-  /**
-   * Get the authentication instance for the GitHub App.
-   * Used for generating JWTs and installation tokens.
-   */
+  get installUrl(): string {
+    return `https://github.com/apps/${this.config.slug}/installations/new`;
+  }
+
   private getAuth() {
-    return createAppAuth({
-      appId: this.config.appId,
-      privateKey: this.config.privateKey,
-    });
+    return createAppAuth({ appId: this.config.appId, privateKey: this.config.privateKey });
   }
 
-  /**
-   * Get an installation access token for a specific installation.
-   * This token can be used to make API calls on behalf of the installation.
-   */
   async getInstallationToken(installationId: number): Promise<InstallationToken> {
-    const auth = this.getAuth();
-    const { token, expiresAt } = await auth({
-      type: "installation",
-      installationId,
-    });
-
+    const { token, expiresAt } = await this.getAuth()({ type: "installation", installationId });
     return { token, expiresAt };
   }
 
-  /**
-   * Create an Octokit instance authenticated as a specific installation.
-   */
   async createInstallationOctokit(installationId: number): Promise<Octokit> {
     const { token } = await this.getInstallationToken(installationId);
     return new Octokit({ auth: token });
   }
 
-  /**
-   * Create an Octokit instance authenticated as the GitHub App.
-   */
-  private async createAppOctokit(): Promise<Octokit> {
+  /** Octokit authenticated as the App itself (JWT) — required for /app/* endpoints. */
+  async createAppOctokit(): Promise<Octokit> {
     const { token } = await this.getAuth()({ type: "app" });
     return new Octokit({ auth: token });
   }
 
-  /**
-   * Get all installations for this GitHub App.
-   */
-  async listInstallations(): Promise<AppInstallation[]> {
-    const octokit = await this.createAppOctokit();
-    const { data } = await octokit.rest.apps.listInstallations();
-    return data as AppInstallation[];
-  }
-
-  /**
-   * Get an installation by its ID.
-   */
   async getInstallation(installationId: number): Promise<AppInstallation | null> {
     const octokit = await this.createAppOctokit();
-
     try {
-      const { data } = await octokit.rest.apps.getInstallation({
-        installation_id: installationId,
-      });
-      return data as AppInstallation;
-    } catch (err: any) {
-      if (err.status === 404) return null;
+      const { data } = await octokit.rest.apps.getInstallation({ installation_id: installationId });
+      return data as unknown as AppInstallation;
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) return null;
       throw err;
     }
   }
 
-  /**
-   * Get repositories accessible by an installation.
-   */
-  async getInstallationRepositories(installationId: number) {
-    const octokit = await this.createInstallationOctokit(installationId);
-    const { data } = await octokit.rest.apps.listReposAccessibleToInstallation({
-      per_page: 100,
-    });
-    return data.repositories;
+  async deleteInstallation(installationId: number): Promise<void> {
+    const octokit = await this.createAppOctokit();
+    await octokit.rest.apps.deleteInstallation({ installation_id: installationId });
   }
 
   /**
-   * Store or update a GitHub App installation in the database.
+   * Exchange the OAuth `code` GitHub sends to the setup URL for a user token,
+   * then list the installations that user can actually access. This is how we
+   * prove the signed-in person really owns/administers `installation_id`
+   * (the query parameter alone can be forged).
    */
+  async userCanAccessInstallation(code: string, installationId: number): Promise<boolean> {
+    const { clientId, clientSecret } = getGitHubAppOAuthConfig();
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { access_token?: string };
+    if (!res.ok || !body.access_token) return false;
+
+    const userOctokit = new Octokit({ auth: body.access_token });
+    const installations = await userOctokit.paginate(userOctokit.rest.apps.listInstallationsForAuthenticatedUser, { per_page: 100 });
+    return installations.some((i) => i.id === installationId);
+  }
+
+  async getInstallationRepositories(installationId: number) {
+    const octokit = await this.createInstallationOctokit(installationId);
+    return octokit.paginate(octokit.rest.apps.listReposAccessibleToInstallation, { per_page: 100 });
+  }
+
+  /** Store or update an installation. Secrets are never copied into the DB. */
   async syncInstallation(installation: AppInstallation): Promise<void> {
     const { id, account, permissions, events } = installation;
+    if (!account) return;
 
     await db
       .insert(githubInstallations)
@@ -157,7 +123,6 @@ export class GitHubAppService {
         status: "active",
         permissions,
         events,
-        webhookSecret: this.config.webhookSecret,
       })
       .onConflictDoUpdate({
         target: githubInstallations.installationId,
@@ -167,68 +132,50 @@ export class GitHubAppService {
           status: "active",
           permissions,
           events,
-          webhookSecret: this.config.webhookSecret,
           updatedAt: new Date(),
         },
       });
   }
 
-  /**
-   * Handle installation event (created, deleted, suspended, etc.)
-   */
-  async handleInstallationEvent(
-    action: "created" | "deleted" | "suspend" | "unsuspend" | "new_permissions_accepted",
-    installation: AppInstallation
-  ): Promise<void> {
+  async handleInstallationEvent(action: InstallationAction | string, installation: AppInstallation): Promise<void> {
     switch (action) {
       case "created":
         await this.syncInstallation(installation);
-        // Auto-sync repositories for this installation
         await this.syncInstallationRepositories(installation.id);
         break;
-
       case "deleted":
         await db
           .update(githubInstallations)
           .set({ status: "deleted", updatedAt: new Date() })
           .where(eq(githubInstallations.installationId, installation.id));
         break;
-
       case "suspend":
         await db
           .update(githubInstallations)
           .set({ status: "suspended", suspendedAt: new Date(), updatedAt: new Date() })
           .where(eq(githubInstallations.installationId, installation.id));
         break;
-
       case "unsuspend":
         await db
           .update(githubInstallations)
           .set({ status: "active", suspendedAt: null, updatedAt: new Date() })
           .where(eq(githubInstallations.installationId, installation.id));
         break;
-
       case "new_permissions_accepted":
         await this.syncInstallation(installation);
         break;
     }
   }
 
-  /**
-   * Sync repositories for an installation to our database.
-   */
   async syncInstallationRepositories(installationId: number): Promise<void> {
-    const repos = await this.getInstallationRepositories(installationId);
-
-    // Get the installation record from DB
     const [installation] = await db
       .select()
       .from(githubInstallations)
       .where(eq(githubInstallations.installationId, installationId))
       .limit(1);
-
     if (!installation) return;
 
+    const repos = await this.getInstallationRepositories(installationId);
     for (const repo of repos) {
       await db
         .insert(repositories)
@@ -238,11 +185,11 @@ export class GitHubAppService {
           fullName: repo.full_name,
           owner: repo.owner.login,
           name: repo.name,
-          defaultBranch: repo.default_branch,
+          defaultBranch: repo.default_branch ?? "main",
           isPrivate: repo.private,
-          language: repo.language,
-          description: repo.description,
-          autoReviewEnabled: false, // Default to off, user enables per-repo
+          language: repo.language ?? null,
+          description: repo.description ?? null,
+          autoReviewEnabled: false, // off by default; enabled per repo by the owner
           cloneUrl: repo.clone_url,
           htmlUrl: repo.html_url,
         })
@@ -251,53 +198,27 @@ export class GitHubAppService {
           set: {
             installationId: installation.id,
             fullName: repo.full_name,
-            defaultBranch: repo.default_branch,
+            defaultBranch: repo.default_branch ?? "main",
             isPrivate: repo.private,
-            language: repo.language,
-            description: repo.description,
+            language: repo.language ?? null,
+            description: repo.description ?? null,
             cloneUrl: repo.clone_url,
             htmlUrl: repo.html_url,
+            status: "active",
             updatedAt: new Date(),
           },
         });
     }
   }
 
-  /**
-   * Verify a webhook signature from GitHub App.
-   */
-  verifyWebhookSignature(payload: string, signature: string): boolean {
-    const expected = "sha256=" + crypto
-      .createHmac("sha256", this.config.webhookSecret)
-      .update(payload)
-      .digest("hex");
-
-    const sigBuf = Buffer.from(signature);
-    const expBuf = Buffer.from(expected);
-
-    return (
-      sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)
-    );
-  }
-
-  /**
-   * Get the installation ID for a repository.
-   */
+  /** Installation that owns a repository, if the app is installed there. */
   async getInstallationIdForRepo(owner: string, repo: string): Promise<number | null> {
-    const [repoRecord] = await db
-      .select({ installationId: repositories.installationId })
+    const [row] = await db
+      .select({ installationId: githubInstallations.installationId })
       .from(repositories)
+      .innerJoin(githubInstallations, eq(repositories.installationId, githubInstallations.id))
       .where(eq(repositories.fullName, `${owner}/${repo}`))
       .limit(1);
-
-    if (!repoRecord?.installationId) return null;
-
-    const [installation] = await db
-      .select({ installationId: githubInstallations.installationId })
-      .from(githubInstallations)
-      .where(eq(githubInstallations.id, repoRecord.installationId))
-      .limit(1);
-
-    return installation?.installationId ? Number(installation.installationId) : null;
+    return row?.installationId ? Number(row.installationId) : null;
   }
 }

@@ -11,6 +11,7 @@ interface TrendsData {
   categoryBreakdown: Array<{ category: string; severity: string; count: number }>;
   velocity: Array<{ week: string; reviews: number }>;
   topIssues: Array<{ message: string; count: number }>;
+  usage?: { reviews: number; totalTokens: number; avgTokensPerReview: number; avgDurationMs: number };
 }
 
 export default function TrendsDashboard() {
@@ -21,25 +22,33 @@ export default function TrendsDashboard() {
   const [timeRange, setTimeRange] = useState<"7d" | "30d" | "90d">("30d");
 
   useEffect(() => {
-    if (isSignedIn) {
-      fetchTrends();
-    }
+    if (!isSignedIn) return;
+    let cancelled = false;
+    const days = timeRange === "7d" ? 7 : timeRange === "30d" ? 30 : 90;
+    fetch(`/api/reviews/trends?days=${days}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to fetch trends");
+        const json = (await res.json()) as TrendsData;
+        if (!cancelled) {
+          setData(json);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to fetch trends");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isSignedIn, timeRange]);
 
-  const fetchTrends = async () => {
+  const changeRange = (range: "7d" | "30d" | "90d") => {
+    if (range === timeRange) return;
     setLoading(true);
-    setError(null);
-    try {
-      const days = timeRange === "7d" ? 7 : timeRange === "30d" ? 30 : 90;
-      const res = await fetch(`/api/reviews/trends?days=${days}`);
-      if (!res.ok) throw new Error("Failed to fetch trends");
-      const data = await res.json();
-      setData(data);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    setTimeRange(range);
   };
 
   if (!isSignedIn) {
@@ -71,7 +80,7 @@ export default function TrendsDashboard() {
             {(["7d", "30d", "90d"] as const).map((range) => (
               <button
                 key={range}
-                onClick={() => setTimeRange(range)}
+                onClick={() => changeRange(range)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
                   timeRange === range
                     ? "bg-zinc-800 text-white border-zinc-700"
@@ -157,12 +166,26 @@ export default function TrendsDashboard() {
             <StatCard
               label="Top Category"
               value={data.categoryBreakdown.length > 0
-                ? data.categoryBreakdown.sort((a, b) => b.count - a.count)[0].category
+                ? [...data.categoryBreakdown].sort((a, b) => b.count - a.count)[0].category
                 : "N/A"}
               icon="🏷️"
               color="violet"
             />
           </div>
+
+          {/* LLM usage — tokens and latency per review */}
+          {data.usage && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <StatCard label="Tokens used" value={data.usage.totalTokens.toLocaleString()} icon="🧮" color="cyan" />
+              <StatCard label="Avg tokens / review" value={data.usage.avgTokensPerReview.toLocaleString()} icon="📊" color="violet" />
+              <StatCard
+                label="Avg review time"
+                value={data.usage.avgDurationMs > 0 ? `${(data.usage.avgDurationMs / 1000).toFixed(1)}s` : "N/A"}
+                icon="⏱️"
+                color="amber"
+              />
+            </div>
+          )}
         </>
       ) : null}
     </div>

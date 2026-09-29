@@ -1,35 +1,25 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { GitHubService } from "@/services";
+import { handleApiError, jsonError } from "@/lib/api";
 
 export async function GET(
   _req: Request,
-  {
-    params,
-  }: { params: Promise<{ owner: string; repo: string; pullNumber: string }> }
+  { params }: { params: Promise<{ owner: string; repo: string; pullNumber: string }> }
 ) {
   try {
-    const { owner, repo, pullNumber } = await params;
-    const prNum = parseInt(pullNumber, 10);
+    const { userId } = await auth();
+    if (!userId) return jsonError(401, "Unauthorized");
 
-    if (!owner || !repo || isNaN(prNum)) {
-      return NextResponse.json(
-        { error: "Invalid PR parameters" },
-        { status: 400 }
-      );
-    }
+    const { owner, repo, pullNumber } = await params;
+    const prNum = Number.parseInt(pullNumber, 10);
+    if (!owner || !repo || !Number.isInteger(prNum) || prNum <= 0) return jsonError(400, "Invalid PR parameters");
 
     const github = await GitHubService.fromCurrentUser();
-    const prDetail = await github.getPRDetail(owner, repo, prNum);
-
-    return NextResponse.json({ pr: prDetail });
-  } catch (error: any) {
-    console.error(
-      "[GET /api/github/repos/[owner]/[repo]/pulls/[pullNumber]]",
-      error
-    );
-    return NextResponse.json(
-      { error: error.message || "Failed to fetch PR details" },
-      { status: error.status || 500 }
-    );
+    const detail = await github.getPRDetail(owner, repo, prNum);
+    // Patches can be megabytes; the browser only needs the file list.
+    return NextResponse.json({ pr: { ...detail, patches: undefined } });
+  } catch (err) {
+    return handleApiError(err, "GET /api/github/repos/[owner]/[repo]/pulls/[pullNumber]");
   }
 }
