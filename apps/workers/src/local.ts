@@ -1,7 +1,7 @@
 /**
  * Local-Kafka entrypoint: `pnpm --filter workers dev:local`.
  *
- * Runs the workers against the docker-compose Redpanda instead of the hosted
+ * Runs the workers against the docker-compose Kafka (cp-kafka) instead of the hosted
  * Kafka configured in `.env`. Vercel cannot reach this broker, so its webhook
  * publishes fail — but every delivery is already stored in `webhook_events`
  * with status "received", and the outbox sweeper republishes those rows into

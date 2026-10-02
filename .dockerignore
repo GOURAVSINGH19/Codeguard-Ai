@@ -2,8 +2,9 @@
 .git
 .gitignore
 
-# Node modules at root (will be rebuilt inside Docker)
-node_modules
+# Node modules anywhere (rebuilt inside Docker). A bare "node_modules" only
+# matches the root one — local per-package installs would overwrite the image's.
+**/node_modules
 
 # Next.js web app build artefacts — not needed by the worker
 apps/web/.next
@@ -23,9 +24,8 @@ apps/web/node_modules
 vitest.config.ts
 
 # Environment files (inject as env vars in Render dashboard)
-.env
-.env.*
-packages/db/.env
+**/.env
+**/.env.*
 
 # Docker build context extras
 docker-compose.yml

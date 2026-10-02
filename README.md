@@ -56,7 +56,7 @@ GitHub Webhook ──► POST /api/webhooks/github
                         │ publish → codeguard.webhook.received
                         ▼
               ┌──────────────────────┐
-              │   Kafka / Redpanda   │
+              │  Kafka (cp-kafka)    │
               │                      │
               │  webhook.received    │
               │  review.requested    │
@@ -160,7 +160,7 @@ parse → auth check → one service call → return response.
 | RAG Embeddings | OpenAI text-embedding-3-small | 1536-dim vectors, best quality/cost |
 | Vector Search | pgvector (Neon PostgreSQL) | No separate vector DB needed |
 | Graph Analysis | Custom BFS DependencyGraph | Blast-radius aware diff selection |
-| Message Queue | Kafka (Redpanda local, Upstash prod) | Async webhook processing |
+| Message Queue | Kafka (Confluent cp-kafka local, hosted Kafka in prod) | Async webhook processing |
 | Database | Neon PostgreSQL + Drizzle ORM | Serverless Postgres, type-safe |
 | GitHub API | Octokit v5 | PR diff fetch, inline comment posting |
 | Tests | Vitest (71 tests) | Fast, ESM-native |
@@ -254,7 +254,7 @@ from reaching the database.
 
 ### Prerequisites
 - Node.js 20+, pnpm 10+
-- Docker Desktop (for Redpanda + Redis)
+- Docker Desktop (for Kafka + Redis)
 - Clerk account (free) — [clerk.com](https://clerk.com)
 - Neon PostgreSQL database (free) — [neon.tech](https://neon.tech)
 - Groq API key (free) — [console.groq.com](https://console.groq.com)
@@ -289,7 +289,8 @@ Key points:
 ### 3. Start infrastructure
 ```bash
 docker-compose up -d
-# Redpanda Console UI → http://localhost:8080
+# Kafka: localhost:19092 (confluentinc/cp-kafka, KRaft)
+# Kafka UI → http://localhost:8080
 # Topics created automatically on first message
 ```
 

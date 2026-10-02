@@ -8,51 +8,56 @@ services:
     volumes:
       - redis_data:/data
 
-  # ─── Redpanda (Kafka-compatible broker) ──────────────────────────────────
-  # Lightweight Kafka replacement — no Zookeeper required.
-  # Kafka-compatible on port 9092. Admin UI on http://localhost:8080.
-  redpanda:
-    image: redpandadata/redpanda:v24.1.1
-    container_name: codeguard-redpanda
-    command:
-      - redpanda
-      - start
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
-      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
-      - --rpc-addr redpanda:33145
-      - --advertise-rpc-addr redpanda:33145
-      - --smp 1
-      - --memory 512M
-      - --mode dev-container
-      - --default-log-level=warn
+  # ─── Kafka (Confluent Platform, KRaft mode — no ZooKeeper) ───────────────
+  # Single broker + controller. From your host use localhost:19092 (the
+  # default in packages/config); other containers use kafka:9092.
+  # Topics are created by the app (ensureTopicsExist) with replication 1.
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: codeguard-kafka
     ports:
-      - "19092:19092"   # External Kafka API — use this from your host machine
-      - "18081:18081"   # Schema Registry
-      - "18082:18082"   # HTTP Proxy
-      - "9644:9644"     # Admin API
+      - "19092:19092"   # Kafka API for the host machine
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      CLUSTER_ID: Q29kZUd1YXJkTG9jYWwxMQ   # any fixed base64 id; keeps the volume reusable
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Single node: internal topics can't be replicated.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
     volumes:
-      - redpanda_data:/var/lib/redpanda/data
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
-      interval: 15s
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 20s
 
-  # ─── Redpanda Console (visual topic / message browser) ───────────────────
-  redpanda-console:
+  # ─── Kafka UI (topic / message browser) → http://localhost:8080 ──────────
+  # Redpanda Console works with any Kafka broker, including cp-kafka.
+  kafka-console:
     image: redpandadata/console:v2.5.2
-    container_name: codeguard-redpanda-console
+    container_name: codeguard-kafka-console
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
     ports:
       - "8080:8080"
     environment:
-      KAFKA_BROKERS: redpanda:9092
+      KAFKA_BROKERS: kafka:9092
 
 volumes:
   redis_data:
-  redpanda_data:
+  kafka_data:
