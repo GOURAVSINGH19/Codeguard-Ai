@@ -1,5 +1,5 @@
 import { TOPICS, WebhookReceivedEventSchema, GitHubPushEventSchema, prMessageKey } from "@codeguard/kafka";
-import type { ReviewRequestedEvent, IndexIncrementalEvent, WebhookReceivedEvent } from "@codeguard/kafka";
+import type { ReviewRequestedEvent, IndexIncrementalEvent, IndexFullEvent, WebhookReceivedEvent } from "@codeguard/kafka";
 import { db, webhookEvents, repositories, eq } from "@codeguard/db";
 import { getWorkerProducer } from "../queue/kafkaClient.js";
 import { runConsumer, PermanentError } from "../queue/consumer.js";
@@ -17,6 +17,7 @@ export const REVIEWABLE_PR_ACTIONS = new Set(["opened", "synchronize", "reopened
  * Publishes: codeguard.review.requested  (PR opened / synchronize / reopened / ready_for_review
  *                                          on repos with auto-review enabled)
  *            codeguard.index.incremental  (pushes to the default branch of known repos)
+ *            codeguard.index.full         (App installed / repositories added to an installation)
  */
 export async function startWebhookProcessor(): Promise<void> {
   await runConsumer({
@@ -31,6 +32,7 @@ export async function startWebhookProcessor(): Promise<void> {
 export type RouteOutcome =
   | { kind: "review"; event: ReviewRequestedEvent }
   | { kind: "index"; event: IndexIncrementalEvent }
+  | { kind: "index-full"; events: IndexFullEvent[] }
   | { kind: "ignored"; reason: string };
 
 export interface RepoLookup {
@@ -133,6 +135,33 @@ export async function decideRoute(envelope: WebhookReceivedEvent, findRepo: Repo
     };
   }
 
+  // The web app syncs these repositories into the DB before publishing the
+  // delivery, so they can be looked up here. Index them so RAG and the
+  // dependency graph have data before the first PR arrives.
+  const installed = envelope.githubEvent === "installation" && payload?.action === "created";
+  const added = envelope.githubEvent === "installation_repositories" && payload?.action === "added";
+  if (installed || added) {
+    const listed: Array<{ full_name?: string }> = (installed ? payload?.repositories : payload?.repositories_added) ?? [];
+    const installationId = typeof payload?.installation?.id === "number" ? payload.installation.id : null;
+    const events: IndexFullEvent[] = [];
+    for (const { full_name } of listed) {
+      if (!full_name) continue;
+      const repoRecord = await findRepo(full_name);
+      if (!repoRecord || repoRecord.status !== "active") continue;
+      const [owner, repo] = full_name.split("/");
+      events.push({
+        owner,
+        repo,
+        repositoryId: repoRecord.id,
+        installationId,
+        reason: installed ? "installed" : "repository_added",
+        triggeredAt: new Date().toISOString(),
+      });
+    }
+    if (events.length === 0) return { kind: "ignored", reason: "no connected repositories to index" };
+    return { kind: "index-full", events };
+  }
+
   return { kind: "ignored", reason: `event ${envelope.githubEvent}` };
 }
 
@@ -166,6 +195,16 @@ async function routeWebhook(envelope: WebhookReceivedEvent): Promise<void> {
       messages: [{ key: `${e.owner}/${e.repo}`.toLowerCase(), value: JSON.stringify(e) }],
     });
     log.info("incremental index requested", { repo: `${e.owner}/${e.repo}`, files: e.changedFiles.length });
+    await markWebhookStatus(envelope.deliveryId, "processed");
+    return;
+  }
+
+  if (outcome.kind === "index-full") {
+    await producer.send({
+      topic: TOPICS.INDEX_FULL,
+      messages: outcome.events.map((e) => ({ key: `${e.owner}/${e.repo}`.toLowerCase(), value: JSON.stringify(e) })),
+    });
+    log.info("full index requested", { repos: outcome.events.map((e) => `${e.owner}/${e.repo}`) });
     await markWebhookStatus(envelope.deliveryId, "processed");
     return;
   }

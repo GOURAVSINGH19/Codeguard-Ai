@@ -1,5 +1,8 @@
-export { ReviewEngine, ReviewValidationError, parseReviewOutput } from "./engine";
-export type { ReviewEngineOptions, ReviewRun, PRReviewInput, PRReviewRun } from "./engine";
+export { ReviewEngine, ReviewValidationError, parseReviewOutput, parseVerificationOutput } from "./engine";
+export type { ReviewEngineOptions, ReviewRun, PRReviewInput, PRReviewRun, VerificationSummary } from "./engine";
+
+export { buildVerifyMessages, applyVerdicts, VerificationOutputSchema, VERDICTS } from "./verify";
+export type { Verdict, VerificationOutput, VerifiedIssues } from "./verify";
 
 export { OpenAICompatibleProvider, LLMError } from "./llm";
 export type { LLMProvider, ChatMessage, LLMResult, LLMUsage, OpenAICompatibleOptions } from "./llm";

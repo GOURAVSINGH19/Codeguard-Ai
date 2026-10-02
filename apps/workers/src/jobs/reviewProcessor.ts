@@ -1,5 +1,5 @@
 import { TOPICS, ReviewRequestedEventSchema, prMessageKey } from "@codeguard/kafka";
-import type { ReviewCompletedEvent, ReviewRequestedEvent } from "@codeguard/kafka";
+import type { IndexFullEvent, ReviewCompletedEvent, ReviewRequestedEvent } from "@codeguard/kafka";
 import type { Octokit } from "octokit";
 import {
   db,
@@ -23,7 +23,7 @@ import {
   postReview,
   CONFIG_FILE_PATH,
 } from "@codeguard/review-engine";
-import type { PRFileInput, RepoConfig } from "@codeguard/review-engine";
+import type { PRFileInput, RepoConfig, VerificationSummary } from "@codeguard/review-engine";
 import { EmbeddingService } from "../ai/EmbeddingService.js";
 import { RAGService } from "../rag/RAGService.js";
 import { PRDiffSelector } from "../analyzers/PRDiffSelector.js";
@@ -31,6 +31,7 @@ import { getWorkerProducer } from "../queue/kafkaClient.js";
 import { runConsumer, PermanentError } from "../queue/consumer.js";
 import { getRepoOctokit } from "../github/octokit.js";
 import { logger } from "../lib/logger.js";
+import { hasChunks } from "./fullIndexer.js";
 
 const CONSUMER_GROUP = "codeguard-review-processor";
 /** GitHub caps `pulls.listFiles` at 3,000 files. */
@@ -108,6 +109,11 @@ export async function processReviewRequest(event: ReviewRequestedEvent): Promise
   const reviewId = claimed.id;
   const rlog = log.child({ reviewId });
 
+  // Repos installed before automatic indexing have no chunks, so RAG and the
+  // dependency graph would silently find nothing. This review runs without
+  // them; the index is ready for the next one.
+  await requestIndexIfMissing(repoRecord.id, owner, repo, event.installationId ?? null, rlog);
+
   try {
     const [prFiles, repoConfig] = await Promise.all([
       listAllPRFiles(octokit, owner, repo, pullNumber),
@@ -173,6 +179,7 @@ export async function processReviewRequest(event: ReviewRequestedEvent): Promise
           excludedFiles: result.excludedFiles,
           ignoredFiles: result.ignoredFiles,
           filteredIssueCount: result.filteredIssueCount,
+          verification: result.verification,
         },
       })
       .where(eq(reviews.id, reviewId));
@@ -418,8 +425,28 @@ async function loadRelatedCode(repositoryId: string, files: PRFileInput[], log: 
   }
 }
 
-function scopeNotes(result: { includedFiles: string[]; excludedFiles: string[]; ignoredFiles: string[]; noPatchFiles: string[] }, incremental: boolean): string[] {
+async function requestIndexIfMissing(repositoryId: string, owner: string, repo: string, installationId: number | null, log: typeof logger): Promise<void> {
+  try {
+    if (await hasChunks(repositoryId)) return;
+    const event: IndexFullEvent = { owner, repo, repositoryId, installationId, reason: "backfill", triggeredAt: new Date().toISOString() };
+    const producer = await getWorkerProducer();
+    await producer.send({ topic: TOPICS.INDEX_FULL, messages: [{ key: `${owner}/${repo}`.toLowerCase(), value: JSON.stringify(event) }] });
+    log.info("repository has no index, full index requested");
+  } catch (err) {
+    // Indexing is best-effort — never block a review on it.
+    log.warn("could not request full index", { error: (err as Error).message });
+  }
+}
+
+function scopeNotes(
+  result: { includedFiles: string[]; excludedFiles: string[]; ignoredFiles: string[]; noPatchFiles: string[]; verification: VerificationSummary },
+  incremental: boolean
+): string[] {
   const notes = [`Reviewed ${result.includedFiles.length} file(s)${incremental ? " changed since the last review" : ""}.`];
+  const v = result.verification;
+  if (v.status === "verified") {
+    notes.push(`Findings checked by a second pass: ${v.confirmed} confirmed, ${v.uncertain} uncertain (severity lowered), ${v.rejected.length} removed as not supported by the diff.`);
+  }
   if (result.excludedFiles.length) notes.push(`Skipped for size: ${result.excludedFiles.join(", ")}`);
   if (result.ignoredFiles.length) notes.push(`Ignored by config: ${result.ignoredFiles.length} file(s)`);
   if (result.noPatchFiles.length) notes.push(`No diff available: ${result.noPatchFiles.join(", ")}`);

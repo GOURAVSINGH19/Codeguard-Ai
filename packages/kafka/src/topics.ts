@@ -39,6 +39,15 @@ export const TOPICS = {
   INDEX_INCREMENTAL: "codeguard.index.incremental",
 
   /**
+   * Published by: webhookProcessor (App installed / repositories added)
+   *               reviewProcessor (backfill when a reviewed repo has no index)
+   * Consumed by:  fullIndexer worker
+   *
+   * Payload: { owner, repo, repositoryId, installationId, reason }
+   */
+  INDEX_FULL: "codeguard.index.full",
+
+  /**
    * Dead-letter topics. A message lands here (with the error attached) when
    * it cannot be parsed or keeps failing after retries, instead of being
    * silently dropped or blocking its partition.
@@ -46,6 +55,7 @@ export const TOPICS = {
   WEBHOOK_RECEIVED_DLQ: "codeguard.webhook.received.dlq",
   REVIEW_REQUESTED_DLQ: "codeguard.review.requested.dlq",
   INDEX_INCREMENTAL_DLQ: "codeguard.index.incremental.dlq",
+  INDEX_FULL_DLQ: "codeguard.index.full.dlq",
 } as const;
 
 export type TopicName = (typeof TOPICS)[keyof typeof TOPICS];

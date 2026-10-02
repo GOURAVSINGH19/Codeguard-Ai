@@ -96,8 +96,8 @@ GitHub Webhook ──► POST /api/webhooks/github
               │  6. Persist to DB + post GitHub comment     │
               │  7. publish review.completed                │
               │                                             │
-              │  8. indexRepository (separate job)         │
-              │     chunks + embeds all repo files          │
+              │  8. fullIndexer (codeguard.index.full)      │
+              │     on install + backfill: embed all files  │
               │     stores vectors in code_chunks table     │
               └─────────────────────────────────────────────┘
 ```
@@ -141,7 +141,15 @@ Invalid output gets one repair attempt, then the review is marked failed.
 If the model hallucinates `severity: "catastrophic"` or `score: 99`, the validation
 fails cleanly — no corrupt data persists, the review status is marked `"failed"`.
 
-### 4. Service Layer Architecture
+### 4. Two-Stage Review: Find, then Verify
+The first model call is asked to be thorough, so it over-reports. A second,
+independent call (the **verifier**) gets the same diff plus the numbered findings
+and judges each one: `confirmed`, `uncertain` or `rejected`. Rejected findings are
+dropped, uncertain ones are kept one severity lower, so **only confirmed findings
+can fail the Check Run**. If the verifier itself fails, the review keeps the
+unverified findings rather than losing the review. The PR summary shows the counts.
+
+### 5. Service Layer Architecture
 All business logic was extracted from fat route handlers into four dedicated service
 classes. God-object score went from 90% → 30%. Every API route is ≤20 lines:
 parse → auth check → one service call → return response.
@@ -326,7 +334,7 @@ instructions: |      # team conventions added to the prompt
 
 ### 7. Run tests
 ```bash
-pnpm test             # 125 tests, ~3 seconds
+pnpm test             # 133 tests, ~3 seconds
 pnpm typecheck        # every workspace package
 ```
 
@@ -378,13 +386,13 @@ Dependabot keeps npm packages, GitHub Actions and the worker's base image curren
 |---|---|---|
 | `packages/types` | 23 | Zod schemas — enums, boundary scores, required fields |
 | `packages/config` | 7 | Provider key isolation, Kafka TLS defaults, private-key newlines |
-| `packages/review-engine` | 31 | Diff line numbers, budget, file attribution, repair retry, prompt injection, retries, inline comments + fallbacks, `.codeguard.yml` |
+| `packages/review-engine` | 36 | Find → verify stage, diff line numbers, budget, file attribution, repair retry, prompt injection, retries, inline comments + fallbacks, `.codeguard.yml` |
 | `web/lib` | 9 | Webhook HMAC, fail-closed, delivery de-duplication, Kafka outage |
 | `web/ReviewService` | 4 | Same commit reviewed once, async completion, failure, rate limit |
-| `workers/webhookProcessor` | 8 | PR/push routing, drafts, auto-review toggle, default branch only |
+| `workers/webhookProcessor` | 11 | PR/push/install routing, drafts, auto-review toggle, default branch only |
 | `workers/consumer` | 5 | DLQ for bad messages, retries, permanent errors |
 | `workers/CodeChunker` / `RAGService` / `DependencyGraph` | 38 | Chunking, RAG formatting, BFS blast radius |
-| **Total** | **125** | |
+| **Total** | **133** | |
 
 ---
 

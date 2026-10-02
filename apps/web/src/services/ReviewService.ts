@@ -76,6 +76,7 @@ export class ReviewService {
             includedFiles: run.includedFiles,
             excludedFiles: run.excludedFiles,
             ignoredFiles: run.ignoredFiles,
+            verification: run.verification,
           },
         });
       } catch (err) {

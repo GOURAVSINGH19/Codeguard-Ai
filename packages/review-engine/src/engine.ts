@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { ReviewOutputSchema } from "@codeguard/types";
 import type { ReviewIssue, ReviewOutput } from "@codeguard/types";
 import { OpenAICompatibleProvider } from "./llm";
@@ -7,6 +8,8 @@ import type { PRFileInput } from "./diff";
 import { buildPRMessages, buildSnippetMessages } from "./prompts";
 import { createIgnoreMatcher, DEFAULT_REPO_CONFIG, severityAtLeast } from "./repo-config";
 import type { RepoConfig } from "./repo-config";
+import { applyVerdicts, buildVerifyMessages, VerificationOutputSchema } from "./verify";
+import type { VerifiedIssues } from "./verify";
 
 export class ReviewValidationError extends Error {
   constructor(message: string, readonly raw: string) {
@@ -43,12 +46,24 @@ export interface PRReviewRun extends ReviewRun {
   commentable: Map<string, Set<number>>;
   /** Issues dropped by `min_severity`. */
   filteredIssueCount: number;
+  verification: VerificationSummary;
+}
+
+export interface VerificationSummary {
+  /** "skipped": disabled or nothing to verify. "failed": verifier errored, findings kept unverified. */
+  status: "verified" | "skipped" | "failed";
+  confirmed: number;
+  uncertain: number;
+  rejected: VerifiedIssues["rejected"];
+  error?: string;
 }
 
 export interface ReviewEngineOptions {
   diffBudgetChars?: number;
   /** Extra LLM calls when the model returns invalid JSON / schema. */
   maxRepairAttempts?: number;
+  /** Run the verifier stage on PR findings (default true). */
+  verifyFindings?: boolean;
   logger?: Pick<Console, "info" | "warn">;
 }
 
@@ -59,11 +74,13 @@ export interface ReviewEngineOptions {
 export class ReviewEngine {
   private readonly budget: number;
   private readonly maxRepairAttempts: number;
+  private readonly verifyFindings: boolean;
   private readonly logger: Pick<Console, "info" | "warn">;
 
   constructor(private readonly llm: LLMProvider, opts: ReviewEngineOptions = {}) {
     this.budget = opts.diffBudgetChars ?? DEFAULT_DIFF_BUDGET_CHARS;
     this.maxRepairAttempts = opts.maxRepairAttempts ?? 1;
+    this.verifyFindings = opts.verifyFindings ?? true;
     this.logger = opts.logger ?? console;
   }
 
@@ -81,6 +98,7 @@ export class ReviewEngine {
   }
 
   async reviewPullRequest(input: PRReviewInput): Promise<PRReviewRun> {
+    const started = Date.now();
     const config = input.repoConfig ?? DEFAULT_REPO_CONFIG;
     const isIgnored = createIgnoreMatcher(config);
     const ignoredFiles = input.files.filter((f) => isIgnored(f.filename)).map((f) => f.filename);
@@ -112,6 +130,7 @@ export class ReviewEngine {
         noPatchFiles: diff.noPatchFiles,
         commentable: diff.commentable,
         filteredIssueCount: 0,
+        verification: SKIPPED_VERIFICATION,
       };
     }
 
@@ -128,36 +147,70 @@ export class ReviewEngine {
 
     const known = new Set(diff.includedFiles);
     const normalized = run.issues.map((issue) => normalizeIssueFile(issue, known));
-    const kept = normalized.filter((i) => severityAtLeast(i.severity, config.min_severity));
+    const found = normalized.filter((i) => severityAtLeast(i.severity, config.min_severity));
+
+    // Stage 2: verify only what would be posted. Uncertain findings come back
+    // one severity lower, so filter by min_severity again afterwards.
+    const checked = await this.verify(found, diff.text, input.relatedCode);
+    const kept = checked.issues.filter((i) => severityAtLeast(i.severity, config.min_severity));
 
     return {
       ...run,
+      usage: addUsage(run.usage, checked.usage),
+      durationMs: Date.now() - started,
       issues: kept,
       includedFiles: diff.includedFiles,
       excludedFiles: diff.excludedFiles,
       ignoredFiles,
       noPatchFiles: diff.noPatchFiles,
       commentable: diff.commentable,
-      filteredIssueCount: normalized.length - kept.length,
+      filteredIssueCount: normalized.length - kept.length - checked.summary.rejected.length,
+      verification: checked.summary,
     };
+  }
+
+  private async verify(
+    issues: ReviewIssue[],
+    diff: string,
+    relatedCode: string | undefined
+  ): Promise<{ issues: ReviewIssue[]; summary: VerificationSummary; usage: LLMUsage | null }> {
+    if (!this.verifyFindings || issues.length === 0) return { issues, summary: SKIPPED_VERIFICATION, usage: null };
+    try {
+      const { value, usage } = await this.completeValidated(buildVerifyMessages({ diff, relatedCode, issues }), parseVerificationOutput);
+      const result = applyVerdicts(issues, value);
+      this.logger.info(
+        `[review-engine] verified ${issues.length} finding(s): ${result.confirmed} confirmed, ${result.uncertain} uncertain, ${result.rejected.length} rejected`
+      );
+      return {
+        issues: result.issues,
+        summary: { status: "verified", confirmed: result.confirmed, uncertain: result.uncertain, rejected: result.rejected },
+        usage,
+      };
+    } catch (err) {
+      // Verification raises precision; it must never cost the author their review.
+      const error = (err as Error).message;
+      this.logger.warn(`[review-engine] verification failed, keeping unverified findings: ${error}`);
+      return { issues, summary: { ...SKIPPED_VERIFICATION, status: "failed", error: error.slice(0, 300) }, usage: null };
+    }
   }
 
   private async run(messages: ChatMessage[]): Promise<ReviewRun> {
     const started = Date.now();
+    const { value, usage } = await this.completeValidated(messages, parseReviewOutput);
+    return { ...value, model: this.llm.model, provider: this.llm.name, usage, durationMs: Date.now() - started };
+  }
+
+  /** Call the model and validate its JSON, with up to `maxRepairAttempts` repair turns. */
+  private async completeValidated<T>(messages: ChatMessage[], parse: (raw: string) => T): Promise<{ value: T; usage: LLMUsage | null }> {
     let conversation = messages;
     let lastError: ReviewValidationError | null = null;
+    let usage: LLMUsage | null = null;
 
     for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt++) {
       const result = await this.llm.completeJSON(conversation);
+      usage = addUsage(usage, result.usage);
       try {
-        const output = parseReviewOutput(result.content);
-        return {
-          ...output,
-          model: this.llm.model,
-          provider: this.llm.name,
-          usage: result.usage,
-          durationMs: Date.now() - started,
-        };
+        return { value: parse(result.content), usage };
       } catch (err) {
         if (!(err instanceof ReviewValidationError)) throw err;
         lastError = err;
@@ -176,8 +229,28 @@ export class ReviewEngine {
   }
 }
 
+const SKIPPED_VERIFICATION: VerificationSummary = { status: "skipped", confirmed: 0, uncertain: 0, rejected: [] };
+
+function addUsage(a: LLMUsage | null, b: LLMUsage | null): LLMUsage | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
 /** Parse + validate model output. Tolerates ```json fences and leading prose. */
 export function parseReviewOutput(raw: string): ReviewOutput {
+  return validateJSON(raw, ReviewOutputSchema);
+}
+
+export function parseVerificationOutput(raw: string) {
+  return validateJSON(raw, VerificationOutputSchema);
+}
+
+function validateJSON<S extends z.ZodTypeAny>(raw: string, schema: S): z.infer<S> {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -191,7 +264,7 @@ export function parseReviewOutput(raw: string): ReviewOutput {
       throw new ReviewValidationError("response is not JSON", raw);
     }
   }
-  const parsed = ReviewOutputSchema.safeParse(json);
+  const parsed = schema.safeParse(json);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .slice(0, 5)

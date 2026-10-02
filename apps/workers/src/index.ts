@@ -4,6 +4,7 @@ import { ensureTopicsExist } from "@codeguard/kafka";
 import { startWebhookProcessor } from "./jobs/webhookProcessor.js";
 import { startReviewProcessor } from "./jobs/reviewProcessor.js";
 import { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
+import { startFullIndexer } from "./jobs/fullIndexer.js";
 import { startWebhookOutboxSweeper, stopWebhookOutboxSweeper } from "./jobs/webhookOutboxSweeper.js";
 import { disconnectProducer } from "./queue/kafkaClient.js";
 import { disconnectConsumers } from "./queue/consumer.js";
@@ -30,6 +31,7 @@ async function main() {
       ["webhookProcessor", startWebhookProcessor],
       ["reviewProcessor", startReviewProcessor],
       ["incrementalIndexer", startIncrementalIndexer],
+      ["fullIndexer", startFullIndexer],
     ].map(([name, start]) =>
       (start as () => Promise<void>)().catch((err) => {
         logger.error("processor crashed", { processor: name, error: (err as Error).message });

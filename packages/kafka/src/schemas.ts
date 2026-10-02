@@ -112,6 +112,22 @@ export const IndexIncrementalEventSchema = z.object({
 
 export type IndexIncrementalEvent = z.infer<typeof IndexIncrementalEventSchema>;
 
+// ─── codeguard.index.full ─────────────────────────────────────────────────────
+
+export const IndexFullEventSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  repositoryId: z.string().uuid(),
+  /** GitHub App installation that owns the repo */
+  installationId: z.number().int().positive().nullable().optional(),
+  /** Why the index was requested */
+  reason: z.enum(["installed", "repository_added", "backfill"]),
+  /** ISO timestamp */
+  triggeredAt: z.string().datetime(),
+});
+
+export type IndexFullEvent = z.infer<typeof IndexFullEventSchema>;
+
 // ─── Dead-letter envelope ────────────────────────────────────────────────────
 
 export const DeadLetterEventSchema = z.object({

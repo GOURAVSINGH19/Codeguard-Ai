@@ -15,6 +15,7 @@ export {
   ReviewCompletedEventSchema,
   GitHubPushEventSchema,
   IndexIncrementalEventSchema,
+  IndexFullEventSchema,
   DeadLetterEventSchema,
 } from "./schemas";
 export type {
@@ -23,5 +24,6 @@ export type {
   ReviewCompletedEvent,
   GitHubPushEvent,
   IndexIncrementalEvent,
+  IndexFullEvent,
   DeadLetterEvent,
 } from "./schemas";

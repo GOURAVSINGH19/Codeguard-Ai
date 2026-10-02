@@ -83,3 +83,29 @@ describe("decideRoute — push", () => {
     expect((await decideRoute(envelope("push", push("refs/heads/main", "0000000000000000000000000000000000000000")), lookup(repo()))).kind).toBe("ignored");
   });
 });
+
+describe("decideRoute — installation", () => {
+  const installPayload = (repos: Array<{ full_name: string }>) => ({ action: "created", installation: { id: 42 }, repositories: repos });
+
+  it("requests a full index for every connected repository on install", async () => {
+    const out = await decideRoute(envelope("installation", installPayload([{ full_name: "acme/api" }, { full_name: "acme/web" }])), lookup(repo()));
+    expect(out.kind).toBe("index-full");
+    if (out.kind === "index-full") {
+      expect(out.events).toHaveLength(2);
+      expect(out.events[0]).toMatchObject({ owner: "acme", repo: "api", repositoryId: repo().id, installationId: 42, reason: "installed" });
+    }
+  });
+
+  it("requests a full index for repositories added to an installation", async () => {
+    const payload = { action: "added", installation: { id: 42 }, repositories_added: [{ full_name: "acme/api" }] };
+    const out = await decideRoute(envelope("installation_repositories", payload), lookup(repo()));
+    expect(out.kind === "index-full" && out.events[0].reason).toBe("repository_added");
+  });
+
+  it("ignores uninstalls, removals and repositories that are not connected", async () => {
+    expect((await decideRoute(envelope("installation", { ...installPayload([{ full_name: "acme/api" }]), action: "deleted" }), lookup(repo()))).kind).toBe("ignored");
+    expect((await decideRoute(envelope("installation_repositories", { action: "removed", repositories_removed: [{ full_name: "acme/api" }] }), lookup(repo()))).kind).toBe("ignored");
+    expect((await decideRoute(envelope("installation", installPayload([{ full_name: "acme/api" }])), lookup(null))).kind).toBe("ignored");
+    expect((await decideRoute(envelope("installation", installPayload([{ full_name: "acme/api" }])), lookup(repo({ status: "inactive" })))).kind).toBe("ignored");
+  });
+});
