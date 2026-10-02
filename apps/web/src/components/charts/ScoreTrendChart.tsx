@@ -56,12 +56,22 @@ export default function ScoreTrendChart({ data, height = 280 }: ScoreTrendChartP
               axisLine={{ stroke: "#27272a" }}
             />
             <YAxis
+              yAxisId="left"
               domain={[0, 10]}
               stroke="#71717a"
               fontSize={10}
               tickLine={false}
               axisLine={false}
               tickFormatter={(value) => `${value}`}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              allowDecimals={false}
+              stroke="#71717a"
+              fontSize={10}
+              tickLine={false}
+              axisLine={false}
             />
             <Tooltip
               contentStyle={{
@@ -70,7 +80,9 @@ export default function ScoreTrendChart({ data, height = 280 }: ScoreTrendChartP
                 borderRadius: "8px",
               }}
               labelStyle={{ color: "#fafafa" }}
-              formatter={(value: number) => [`${value.toFixed(1)}/10`, "Avg Score"]}
+              formatter={(value: number, name: string) =>
+                name === "Review Count" ? [value, name] : [`${value.toFixed(1)}/10`, name]
+              }
             />
             <Legend />
             <Line
@@ -80,6 +92,7 @@ export default function ScoreTrendChart({ data, height = 280 }: ScoreTrendChartP
               strokeWidth={2}
               dot={{ fill: "#22c55e", strokeWidth: 2, r: 4 }}
               activeDot={{ r: 6 }}
+              yAxisId="left"
               name="Avg Score"
             />
             <Line

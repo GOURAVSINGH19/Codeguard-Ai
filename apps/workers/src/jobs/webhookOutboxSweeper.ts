@@ -1,4 +1,4 @@
-import { db, webhookEvents, eq, and, lt, gt } from "@codeguard/db";
+import { db, webhookEvents, eq, and, or, lt, gt, isNotNull } from "@codeguard/db";
 import { TOPICS } from "@codeguard/kafka";
 import type { WebhookReceivedEvent } from "@codeguard/kafka";
 import { getWorkerProducer } from "../queue/kafkaClient.js";
@@ -9,11 +9,15 @@ import { logger } from "../lib/logger.js";
  *
  * The web app stores every webhook delivery before publishing it. If the
  * publish failed (Kafka down, cold start timeout) the row stays in status
- * "received". Every minute we republish rows that have been stuck for over a
- * minute (and are less than a day old). Duplicates are harmless: reviews are
- * claimed per (PR, head SHA) and indexing is idempotent.
+ * "received". We republish rows less than a day old that either carry the web
+ * app's publish error (that attempt is over, so no race) or have been stuck for
+ * over a minute (the web app died before recording the error). Duplicates are
+ * harmless: reviews are claimed per (PR, head SHA) and indexing is idempotent.
+ *
+ * OUTBOX_SWEEP_INTERVAL_MS shortens the interval — local mode relies on the
+ * sweeper for every event, so it sweeps every few seconds.
  */
-const INTERVAL_MS = 60_000;
+const INTERVAL_MS = Number(process.env.OUTBOX_SWEEP_INTERVAL_MS) || 60_000;
 const BATCH = 50;
 
 let timer: NodeJS.Timeout | null = null;
@@ -29,7 +33,7 @@ export function startWebhookOutboxSweeper(): void {
         .where(
           and(
             eq(webhookEvents.status, "received"),
-            lt(webhookEvents.createdAt, new Date(now - 60_000)),
+            or(isNotNull(webhookEvents.error), lt(webhookEvents.createdAt, new Date(now - 60_000))),
             gt(webhookEvents.createdAt, new Date(now - 24 * 60 * 60_000))
           )
         )

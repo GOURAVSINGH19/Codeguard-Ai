@@ -1,474 +1,511 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useUser, SignInButton } from "@clerk/nextjs";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import {
+  ArrowClockwise,
+  ArrowRight,
+  Bug,
+  CaretRight,
+  CheckCircle,
+  GitPullRequest,
+  GithubLogo,
+  MagnifyingGlass,
+  Plus,
+  ShieldCheck,
+  Star,
+  Trash,
+  Warning,
+  WarningOctagon,
+  XCircle,
+  ArrowsClockwise,
+  X,
+} from "@phosphor-icons/react";
 import PRReviewer from "./PRReviewer";
-import { pollReview } from "@/lib/poll-review";
-import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "./ui/SeverityBadge";
+import PixelLoader, { PixelLoaderBlock } from "./ui/PixelLoader";
+import { NEW_REVIEW_EVENT } from "@/lib/events";
 
-interface Issue {
-  severity: "critical" | "high" | "medium" | "low";
-  category: "security" | "bug" | "performance" | "maintainability" | "style";
-  file?: string | null;
-  line: number | null;
-  message: string;
-  suggestion: string | null;
-}
+type Severity = "critical" | "high" | "medium" | "low";
+type Group = "attention" | "working" | "completed" | "failed";
 
-interface HistoryItem {
+interface ReviewRow {
   id: string;
   title: string | null;
-  language: string | null;
   score: number | null;
-  status: string;
-  reviewType: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
   createdAt: string;
-  issues: Issue[];
+  issues: { severity: Severity; category: string }[];
 }
 
-interface ReviewResult {
-  id?: string;
-  score: number;
-  summary: string;
-  issues: Issue[];
-  createdAt?: string;
+interface TrendsData {
+  scoreTrend: Array<{ date: string; avgScore: number; count: number }>;
+  categoryBreakdown: Array<{ category: string; severity: string; count: number }>;
 }
 
-const SAMPLE_SNIPPETS: Record<string, { language: string; code: string }> = {
-  "SQL Injection": {
-    language: "javascript",
-    code: `function getUser(id) {\n  const query = \`SELECT * FROM users WHERE id = \${id}\`;\n  return db.query(query);\n}`,
-  },
-  "Missing Await": {
-    language: "typescript",
-    code: `async function fetchUserProfile(userId: string) {\n  const response = fetch(\`/api/users/\${userId}\`);\n  const data = response.json(); // Bug: missing await\n  return data.name;\n}`,
-  },
-  "Resource Leak": {
-    language: "python",
-    code: `def process_log_file(filename):\n    f = open(filename, 'r')\n    data = f.read()\n    # Missing f.close() or 'with open(...)'\n    return len(data)`,
-  },
+const RANGE_DAYS = 30;
+const GROUP_PAGE_SIZE = 10;
+
+const GROUPS: { id: Group; label: string; icon: React.ComponentType<{ size?: number; className?: string }>; tone: string; empty: string }[] = [
+  { id: "attention", label: "Needs attention", icon: Warning, tone: "text-amber-400", empty: "No reviews need attention." },
+  { id: "working", label: "Working", icon: ArrowsClockwise, tone: "text-orange-400", empty: "No reviews in progress." },
+  { id: "completed", label: "Completed", icon: CheckCircle, tone: "text-emerald-400", empty: "No completed reviews yet." },
+  { id: "failed", label: "Failed", icon: XCircle, tone: "text-rose-400", empty: "No failed reviews." },
+];
+
+const SEVERITY_META: Record<Severity, { label: string; bar: string }> = {
+  critical: { label: "Critical", bar: "bg-rose-500" },
+  high: { label: "High", bar: "bg-orange-400" },
+  medium: { label: "Medium", bar: "bg-amber-300" },
+  low: { label: "Low", bar: "bg-sky-400" },
 };
 
-const MAX_CHARS = 8000;
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function scoreClass(score: number) {
+  return score >= 8 ? "text-emerald-400" : score >= 5 ? "text-amber-300" : "text-rose-400";
+}
+
+/** One point per day for the range, so gaps render as zero instead of being skipped. */
+function dailySeries(trend: TrendsData["scoreTrend"]) {
+  const byDate = new Map(trend.map((p) => [p.date.slice(0, 10), p.count]));
+  const out: { day: string; reviews: number }[] = [];
+  for (let i = RANGE_DAYS - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    out.push({
+      day: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      reviews: byDate.get(d.toISOString().slice(0, 10)) ?? 0,
+    });
+  }
+  return out;
+}
 
 export default function ReviewerDashboard() {
-  const { isSignedIn } = useUser();
-  const [code, setCode] = useState<string>(SAMPLE_SNIPPETS["SQL Injection"].code);
-  const [language, setLanguage] = useState<string>("javascript");
-  const [title, setTitle] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [result, setResult] = useState<ReviewResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"snippet" | "pr">("snippet");
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [filterCategory, setFilterCategory] = useState<string>("all");
+  const { isSignedIn, isLoaded } = useUser();
+  const [trends, setTrends] = useState<TrendsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [version, setVersion] = useState(0);
+  // Opened from the sidebar / command palette via /?new=1 or NEW_REVIEW_EVENT.
+  const [showReviewer, setShowReviewer] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("new")
+  );
 
-  const [historyVersion, setHistoryVersion] = useState(0);
-  const refreshHistory = () => setHistoryVersion((v) => v + 1);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("new")) window.history.replaceState(null, "", "/");
+    const open = () => {
+      setShowReviewer(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    window.addEventListener(NEW_REVIEW_EVENT, open);
+    return () => window.removeEventListener(NEW_REVIEW_EVENT, open);
+  }, []);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+
+  const refresh = () => {
+    setLoading(true);
+    setVersion((v) => v + 1);
+  };
+
+  // Debounce the search box into the query the groups fetch with.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    fetch("/api/reviews")
-      .then(async (res) => {
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setHistory(data.reviews || []);
+    fetch(`/api/reviews/trends?days=${RANGE_DAYS}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!cancelled) setTrends(json);
       })
-      .catch((e) => console.error("Failed to load review history:", e))
+      .catch((e) => console.error("Failed to load dashboard:", e))
       .finally(() => {
-        if (!cancelled) setHistoryLoading(false);
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [isSignedIn, historyVersion]);
+  }, [isSignedIn, version]);
 
-  const handleReview = async () => {
-    if (loading) return;
-    if (!code.trim()) {
-      setError("Please paste or type some code to review.");
-      return;
+  const stats = useMemo(() => {
+    const trend = trends?.scoreTrend ?? [];
+    const reviews = trend.reduce((a, p) => a + p.count, 0);
+    const weighted = trend.reduce((a, p) => a + p.avgScore * p.count, 0);
+    const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const b of trends?.categoryBreakdown ?? []) {
+      if (b.severity in bySeverity) bySeverity[b.severity as Severity] += b.count;
     }
+    const issues = Object.values(bySeverity).reduce((a, n) => a + n, 0);
+    return {
+      reviews,
+      avgScore: reviews > 0 ? weighted / reviews : null,
+      issues,
+      blocking: bySeverity.critical + bySeverity.high,
+      bySeverity,
+      series: dailySeries(trend),
+    };
+  }, [trends]);
 
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setFilterCategory("all");
-
-    try {
-      const res = await fetch("/api/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language, title: title.trim() || undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to analyze code");
-      // The review runs in the background — wait for it to finish.
-      const review = await pollReview(data.id);
-      setResult({
-        id: review.id,
-        score: review.score ?? 0,
-        summary: review.summary ?? "",
-        issues: review.issues,
-        createdAt: review.createdAt,
-      });
-      if (isSignedIn) refreshHistory();
-    } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : "An unexpected error occurred.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCopy = (text: string, idx: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 2000);
-  };
-
-  const filteredIssues = result?.issues.filter(
-    (i) => filterCategory === "all" || i.category === filterCategory
-  ) ?? [];
-
-  const categories = result
-    ? Array.from(new Set(result.issues.map((i) => i.category)))
-    : [];
+  if (!isLoaded) return <PixelLoaderBlock className="min-h-[70vh]" />;
+  if (!isSignedIn) return <SignedOutState />;
+  // First load only — later refreshes keep the page on screen.
+  if (loading && !trends) return <PixelLoaderBlock className="min-h-[70vh]" />;
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-8 flex flex-col gap-8">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-lg shrink-0">
-            🛡️
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">CodeGuard AI</h1>
-            <p className="text-xs text-zinc-400">
-              AI code & PR review · Inline GitHub comments · Graph-aware diff selection · pgvector RAG
-            </p>
-          </div>
+    <div className="w-full max-w-5xl mx-auto px-4 md:px-6 pt-4 pb-10 flex flex-col gap-5">
+      {/* Title row */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-cg-text">PR reviews</h1>
+          <p className="text-sm text-cg-subtle">Last {RANGE_DAYS} days across your repositories.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={refresh}
+            disabled={loading}
+            aria-label="Refresh"
+            className="h-8 w-8 flex items-center justify-center rounded border border-cg-border text-cg-muted hover:text-cg-text hover:bg-cg-raised transition disabled:opacity-50"
+          >
+            <ArrowClockwise size={15} className={loading ? "animate-spin" : ""} />
+          </button>
+          <button
+            onClick={() => setShowReviewer((v) => !v)}
+            className="h-8 px-3 flex items-center gap-1.5 rounded border border-cg-border bg-cg-raised text-sm text-cg-text hover:bg-cg-border/60 transition"
+          >
+            {showReviewer ? <X size={14} /> : <Plus size={14} />}
+            {showReviewer ? "Close" : "New review"}
+          </button>
         </div>
       </div>
 
-      {/* Tab Switcher */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 pb-3">
-        <button
-          onClick={() => setActiveTab("snippet")}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition border ${
-            activeTab === "snippet"
-              ? "bg-zinc-800 text-white border-zinc-700 shadow-md"
-              : "bg-transparent text-zinc-400 border-transparent hover:text-zinc-200"
-          }`}
-        >
-          ⚡ Quick Snippet Review
-        </button>
-        <button
-          onClick={() => setActiveTab("pr")}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition border ${
-            activeTab === "pr"
-              ? "bg-zinc-800 text-cyan-400 border-cyan-500/40 shadow-md"
-              : "bg-transparent text-zinc-400 border-transparent hover:text-zinc-200"
-          }`}
-        >
-          🚀 GitHub PR Review
-        </button>
+      {showReviewer && (
+        <section className="rounded-md border border-cg-border p-5">
+          <PRReviewer />
+        </section>
+      )}
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-md overflow-hidden border border-cg-border bg-cg-border">
+        <Kpi icon={GitPullRequest} label="PRs reviewed" value={stats.reviews.toLocaleString()} />
+        <Kpi
+          icon={Star}
+          label="Avg. quality score"
+          value={stats.avgScore === null ? "—" : stats.avgScore.toFixed(1)}
+          suffix={stats.avgScore === null ? undefined : "/ 10"}
+        />
+        <Kpi icon={Bug} label="Issues found" value={stats.issues.toLocaleString()} />
+        <Kpi icon={WarningOctagon} label="Critical & high" value={stats.blocking.toLocaleString()} />
       </div>
 
-      {activeTab === "pr" ? (
-        <PRReviewer />
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* ── Left: Input ── */}
-          <div className="lg:col-span-7 flex flex-col gap-4">
-            <div className="bg-zinc-900/70 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4">
-              {/* Language + Title row */}
-              <div className="flex flex-wrap gap-3">
-                <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
-                  <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Language</label>
-                  <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="bg-zinc-800 text-zinc-200 text-xs rounded-lg px-3 py-2 border border-zinc-700 focus:outline-none focus:border-cyan-500"
-                  >
-                    {["typescript","javascript","python","go","rust","java","cpp","sql","ruby","php"].map((l) => (
-                      <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1 flex-[2] min-w-[200px]">
-                  <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Review title <span className="text-zinc-600 normal-case">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="e.g. Auth middleware refactor"
-                    maxLength={80}
-                    className="bg-zinc-800 text-zinc-200 text-xs rounded-lg px-3 py-2 border border-zinc-700 focus:outline-none focus:border-cyan-500 placeholder:text-zinc-600"
-                  />
-                </div>
-              </div>
-
-              {/* Sample presets */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                <span className="text-[10px] text-zinc-500 shrink-0 uppercase tracking-wider">Presets:</span>
-                {Object.entries(SAMPLE_SNIPPETS).map(([label, snippet]) => (
-                  <button
-                    key={label}
-                    onClick={() => { setCode(snippet.code); setLanguage(snippet.language); }}
-                    className="text-[10px] px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition shrink-0 border border-zinc-700/50"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Code textarea */}
-              <div className="relative">
-                <textarea
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.slice(0, MAX_CHARS))}
-                  rows={12}
-                  placeholder="Paste code snippet here..."
-                  className="w-full font-mono text-xs bg-zinc-950 text-zinc-100 p-4 rounded-xl border border-zinc-800 focus:outline-none focus:border-cyan-500 resize-y leading-relaxed"
+      {/* Activity + severity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <Panel title="Review activity" className="lg:col-span-2">
+          <div className="h-44 -mx-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={stats.series} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ffa057" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="#ffa057" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis
+                  dataKey="day"
+                  stroke="#71717a"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                  minTickGap={40}
                 />
-                {/* Char counter */}
-                <span className={`absolute bottom-3 right-3 text-[10px] font-mono ${
-                  code.length > MAX_CHARS * 0.9 ? "text-amber-400" : "text-zinc-600"
-                }`}>
-                  {code.length.toLocaleString()} / {MAX_CHARS.toLocaleString()}
-                </span>
-              </div>
+                <Tooltip
+                  cursor={{ stroke: "#3f3f46" }}
+                  contentStyle={{ background: "#232127", border: "1px solid #38353d", borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: "#a1a1aa" }}
+                  itemStyle={{ color: "#fafafa" }}
+                  formatter={(v: number) => [v, "Reviews"]}
+                />
+                <Area type="monotone" dataKey="reviews" stroke="#ffa057" strokeWidth={1.75} fill="url(#activityFill)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
 
-              {/* Submit */}
-              <button
-                onClick={handleReview}
-                disabled={loading || !code.trim()}
-                className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-black hover:opacity-90 transition disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                    <span>Analyzing...</span>
-                  </>
-                ) : (
-                  <span>⚡ Review Code</span>
-                )}
-              </button>
+        <Panel title="Issues by severity">
+          {stats.issues === 0 ? (
+            <div className="h-44 flex flex-col items-center justify-center gap-2 text-center">
+              <ShieldCheck size={24} className="text-emerald-400" />
+              <p className="text-sm text-cg-subtle">No issues found yet</p>
             </div>
-
-            {/* History */}
-            {isSignedIn ? (
-              <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl p-5 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Recent Reviews
-                  </h3>
-                  <button
-                    onClick={() => {
-                      setHistoryLoading(true);
-                      refreshHistory();
-                    }}
-                    disabled={historyLoading}
-                    className="text-[10px] text-zinc-500 hover:text-zinc-300 transition"
-                  >
-                    {historyLoading ? "Loading..." : "↻ Refresh"}
-                  </button>
-                </div>
-                {historyLoading ? (
-                  <div className="flex flex-col gap-2">
-                    {[1,2,3].map((i) => (
-                      <div key={i} className="h-10 rounded-lg bg-zinc-800/50 animate-pulse" />
-                    ))}
-                  </div>
-                ) : history.length === 0 ? (
-                  <p className="text-xs text-zinc-500 text-center py-3">No reviews yet. Run your first review above.</p>
-                ) : (
-                  <div className="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1">
-                    {history.map((h) => (
-                      <Link
-                        key={h.id}
-                        href={`/reviews/${h.id}`}
-                        className="flex items-center justify-between text-xs p-3 rounded-lg bg-zinc-900 border border-zinc-800/60 hover:border-cyan-500/50 transition group"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-mono text-zinc-300 group-hover:text-white transition truncate">
-                            {h.title || "Code Review"}
-                          </span>
-                          <span className="text-zinc-600 text-[10px] shrink-0">({h.language})</span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0 ml-2">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            (h.score || 0) >= 8 ? "bg-emerald-500/20 text-emerald-400" :
-                            (h.score || 0) >= 5 ? "bg-amber-500/20 text-amber-400" :
-                            "bg-rose-500/20 text-rose-400"
-                          }`}>
-                            {h.score?.toFixed(1)}/10
-                          </span>
-                          <span className="text-zinc-600 group-hover:text-cyan-400 text-[10px]">→</span>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="bg-zinc-900/40 border border-dashed border-zinc-700 rounded-2xl p-5 flex flex-col items-center gap-3 text-center">
-                <span className="text-2xl">🔐</span>
-                <p className="text-xs text-zinc-400 font-medium">Sign in to save your review history</p>
-                <SignInButton mode="modal">
-                  <button className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition border border-zinc-700">
-                    Sign in with GitHub
-                  </button>
-                </SignInButton>
-              </div>
-            )}
-          </div>
-
-          {/* ── Right: Results ── */}
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            {error && (
-              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-                🚨 <strong>Error:</strong> {error}
-              </div>
-            )}
-
-            {!result && !loading && !error && (
-              <div className="bg-zinc-900/40 border border-dashed border-zinc-800 rounded-2xl p-10 flex flex-col items-center justify-center text-center gap-3 text-zinc-500 h-full min-h-[350px]">
-                <span className="text-4xl">🔍</span>
-                <p className="text-sm font-medium text-zinc-400">Ready to Analyze</p>
-                <p className="text-xs max-w-xs leading-relaxed text-zinc-500">
-                  Paste your code on the left and click <span className="text-zinc-300 font-semibold">Review Code</span>.
-                  Uses Llama 3.3 70B with Zod-validated output.
-                </p>
-              </div>
-            )}
-
-            {loading && (
-              <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-10 flex flex-col items-center justify-center text-center gap-4 h-full min-h-[350px]">
-                <div className="w-12 h-12 rounded-full border-2 border-cyan-500/20 border-t-cyan-500 animate-spin" />
-                <div>
-                  <p className="text-sm font-medium text-zinc-200">Analyzing with AI</p>
-                  <p className="text-xs text-zinc-500 mt-1">Checking security, bugs, performance...</p>
-                </div>
-              </div>
-            )}
-
-            {result && !loading && (
-              <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-5">
-                {/* Score + link */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Quality Score</p>
-                    <ScoreDisplay score={result.score} />
-                  </div>
-                  {result.id && (
-                    <Link
-                      href={`/reviews/${result.id}`}
-                      className="text-[10px] text-cyan-400 hover:text-cyan-300 font-semibold underline underline-offset-4 shrink-0 mt-6"
-                    >
-                      Full report ↗
-                    </Link>
-                  )}
-                </div>
-
-                {/* Severity breakdown */}
-                <SeverityCountBar issues={result.issues} />
-
-                {/* Summary */}
-                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800/80">
-                  <h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Executive Summary</h4>
-                  <p className="text-xs text-zinc-300 leading-relaxed">{result.summary}</p>
-                </div>
-
-                {/* Category filter */}
-                {categories.length > 1 && (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Filter:</span>
-                    <button
-                      onClick={() => setFilterCategory("all")}
-                      className={`text-[10px] px-2 py-0.5 rounded border transition ${
-                        filterCategory === "all"
-                          ? "bg-zinc-700 text-white border-zinc-600"
-                          : "text-zinc-400 border-zinc-700 hover:text-white"
-                      }`}
-                    >
-                      All ({result.issues.length})
-                    </button>
-                    {categories.map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setFilterCategory(cat)}
-                        className={`text-[10px] px-2 py-0.5 rounded border transition capitalize ${
-                          filterCategory === cat
-                            ? "bg-zinc-700 text-white border-zinc-600"
-                            : "text-zinc-400 border-zinc-700 hover:text-white"
-                        }`}
-                      >
-                        {cat} ({result.issues.filter((i) => i.category === cat).length})
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Issues list */}
-                <div className="flex flex-col gap-2.5 max-h-[420px] overflow-y-auto pr-1">
-                  {filteredIssues.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs text-center">
-                      🎉 No issues in this category!
+          ) : (
+            <div className="flex flex-col gap-3.5">
+              {(Object.keys(SEVERITY_META) as Severity[]).map((s) => {
+                const n = stats.bySeverity[s];
+                return (
+                  <div key={s} className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-cg-muted">{SEVERITY_META[s].label}</span>
+                      <span className="text-cg-subtle tabular-nums">{n}</span>
                     </div>
-                  ) : (
-                    filteredIssues.map((issue, idx) => (
-                      <div key={idx} className="bg-zinc-950 border border-zinc-800/90 rounded-xl p-4 flex flex-col gap-2">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <SeverityBadge severity={issue.severity} />
-                            <CategoryBadge category={issue.category} />
-                          </div>
-                          {issue.line !== null && (
-                            <span className="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-                              Line {issue.line}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-200 leading-relaxed">{issue.message}</p>
-                        {issue.suggestion && (
-                          <div className="mt-1 bg-zinc-900/90 border border-zinc-800 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">
-                                💡 Suggested Fix
-                              </span>
-                              <button
-                                onClick={() => handleCopy(issue.suggestion!, idx)}
-                                className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition border border-zinc-700"
-                              >
-                                {copiedIdx === idx ? "✓ Copied" : "Copy"}
-                              </button>
-                            </div>
-                            <pre className="font-mono text-[11px] text-zinc-300 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                              {issue.suggestion}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
+                    <div className="h-1 rounded-full bg-cg-raised overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${SEVERITY_META[s].bar}`}
+                        style={{ width: `${(n / stats.issues) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      </div>
 
-                <div className="text-[10px] text-zinc-600 text-center border-t border-zinc-800/60 pt-3">
-                  🔒 Schema safety guaranteed by Zod · Model: Llama 3.3 70B
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <MagnifyingGlass size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cg-subtle" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search review titles..."
+            className="w-full h-8 pl-8 pr-3 rounded border border-cg-border bg-transparent text-sm text-cg-text placeholder:text-cg-subtle focus:outline-none focus:border-cg-muted"
+          />
+        </div>
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            className="h-8 px-2 flex items-center gap-1.5 text-sm text-cg-subtle hover:text-cg-text transition"
+          >
+            <Trash size={14} />
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Status groups — each pages independently. Keyed so a new search/refresh starts fresh. */}
+      <div className="flex flex-col gap-3">
+        {GROUPS.map((g, i) => (
+          <ReviewGroup key={`${g.id}:${query}:${version}`} group={g} query={query} defaultOpen={i === 0 || i === 2} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewGroup({
+  group,
+  query,
+  defaultOpen,
+}: {
+  group: (typeof GROUPS)[number];
+  query: string;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [items, setItems] = useState<ReviewRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const url = (p: number) =>
+    `/api/reviews?group=${group.id}&page=${p}&pageSize=${GROUP_PAGE_SIZE}${query ? `&q=${encodeURIComponent(query)}` : ""}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(url(1))
+      .then(async (r) => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || "Failed to load reviews");
+        if (cancelled) return;
+        setItems(json.reviews ?? []);
+        setTotal(json.total ?? 0);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load reviews");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // url() only depends on props that are part of this component's key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const r = await fetch(url(next));
+      const json = await r.json();
+      if (!r.ok) throw new Error(json.error || "Failed to load reviews");
+      setItems((prev) => [...prev, ...(json.reviews ?? [])]);
+      setTotal(json.total ?? 0);
+      setPage(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load reviews");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const Icon = group.icon;
+
+  return (
+    <section className="rounded-md border border-cg-border">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full h-12 px-4 flex items-center gap-2.5 text-left"
+      >
+        <CaretRight size={13} className={`text-cg-subtle transition-transform ${open ? "rotate-90" : ""}`} />
+        <Icon size={16} className={group.tone} />
+        <span className="text-sm font-medium text-cg-text">{group.label}</span>
+        <span className="min-w-5 h-5 px-1.5 rounded bg-cg-raised text-xs text-cg-muted flex items-center justify-center tabular-nums">
+          {loading ? "–" : total}
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-2 pb-2">
+          {loading ? (
+            <div className="py-6 flex justify-center">
+              <PixelLoader />
+            </div>
+          ) : error ? (
+            <p className="py-6 text-center text-sm text-rose-400">{error}</p>
+          ) : items.length === 0 ? (
+            <div className="py-6 flex items-center justify-center gap-2.5 text-sm text-cg-subtle">
+              <GitPullRequest size={18} />
+              {query ? "No matching reviews." : group.empty}
+            </div>
+          ) : (
+            <>
+              <ul className="flex flex-col">
+                {items.map((r) => (
+                  <ReviewItem key={r.id} review={r} />
+                ))}
+              </ul>
+              {items.length < total && (
+                <div className="flex items-center justify-between px-2 pt-2 text-xs text-cg-subtle">
+                  <span className="tabular-nums">
+                    Showing {items.length} of {total}
+                  </span>
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="h-7 px-2.5 rounded border border-cg-border text-cg-muted hover:text-cg-text hover:bg-cg-raised transition disabled:pointer-events-none"
+                  >
+                    {loadingMore ? <PixelLoader className="!text-xs" /> : "Load more"}
+                  </button>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </>
+          )}
         </div>
       )}
+    </section>
+  );
+}
+
+function ReviewItem({ review: r }: { review: ReviewRow }) {
+  const major = r.issues.filter((i) => i.severity === "critical" || i.severity === "high").length;
+  return (
+    <li>
+      <Link
+        href={`/reviews/${r.id}`}
+        className="flex items-center gap-3 px-2 py-2.5 rounded hover:bg-cg-raised transition-colors group"
+      >
+        <GitPullRequest size={16} className="text-cg-subtle shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-cg-text truncate">{r.title || "Untitled review"}</p>
+          <p className="text-xs text-cg-subtle mt-0.5">
+            {timeAgo(r.createdAt)} · {r.issues.length} {r.issues.length === 1 ? "issue" : "issues"}
+            {major > 0 && <span className="text-rose-400"> · {major} major</span>}
+          </p>
+        </div>
+        {r.status === "pending" || r.status === "in_progress" ? (
+          <PixelLoader label={r.status === "pending" ? "Queued" : "Reviewing"} className="!text-xs" />
+        ) : r.score !== null ? (
+          <span className={`text-sm font-medium tabular-nums ${scoreClass(r.score)}`}>{r.score.toFixed(1)}</span>
+        ) : null}
+        <ArrowRight size={14} className="text-cg-subtle opacity-0 group-hover:opacity-100 transition-opacity" />
+      </Link>
+    </li>
+  );
+}
+
+function Kpi({
+  icon: Icon,
+  label,
+  value,
+  suffix,
+}: {
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  label: string;
+  value: string;
+  suffix?: string;
+}) {
+  return (
+    <div className="p-4 flex flex-col gap-2.5 bg-cg-panel">
+      <div className="flex items-center gap-2 text-cg-subtle">
+        <Icon size={14} />
+        <span className="text-xs">{label}</span>
+      </div>
+      <p className="text-2xl font-semibold text-cg-text tabular-nums">
+        {value}
+        {suffix && <span className="text-sm font-normal text-cg-subtle ml-1">{suffix}</span>}
+      </p>
+    </div>
+  );
+}
+
+function Panel({ title, className = "", children }: { title: string; className?: string; children: React.ReactNode }) {
+  return (
+    <section className={`rounded-md border border-cg-border ${className}`}>
+      <h2 className="px-4 pt-3.5 pb-3 text-sm font-medium text-cg-text">{title}</h2>
+      <div className="px-4 pb-4">{children}</div>
+    </section>
+  );
+}
+
+function SignedOutState() {
+  return (
+    <div className="min-h-[75vh] flex items-center justify-center px-4">
+      <div className="max-w-md w-full text-center flex flex-col items-center gap-5">
+        <span className="h-11 w-11 rounded-full bg-cg-text text-cg-bg flex items-center justify-center">
+          <ShieldCheck size={22} weight="fill" />
+        </span>
+        <div>
+          <h1 className="text-xl font-semibold text-cg-text">AI code reviews for every pull request</h1>
+          <p className="text-sm text-cg-muted mt-2 leading-relaxed">
+            CodeGuard reviews your diffs, catches bugs and security issues, and posts inline comments on GitHub.
+          </p>
+        </div>
+        <SignInButton mode="modal">
+          <button className="h-9 px-4 flex items-center gap-2 rounded bg-cg-text text-cg-bg text-sm font-medium hover:opacity-90 transition">
+            <GithubLogo size={16} weight="fill" />
+            Sign in with GitHub
+          </button>
+        </SignInButton>
+      </div>
     </div>
   );
 }

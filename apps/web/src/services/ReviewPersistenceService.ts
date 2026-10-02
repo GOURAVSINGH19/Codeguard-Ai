@@ -10,6 +10,11 @@ import {
   gte,
   inArray,
   count,
+  or,
+  lt,
+  isNull,
+  ilike,
+  type SQL,
 } from "@codeguard/db";
 import type { ReviewIssue } from "@codeguard/types";
 import type { ReviewRun } from "@codeguard/review-engine";
@@ -25,6 +30,30 @@ export interface ReviewIssueItem {
   line: number | null;
   message: string;
   suggestion: string | null;
+}
+
+/** Dashboard buckets: completed reviews scoring below 5 need attention. */
+export const REVIEW_GROUPS = ["attention", "working", "completed", "failed"] as const;
+export type ReviewGroup = (typeof REVIEW_GROUPS)[number];
+
+const ATTENTION_SCORE = 5;
+
+function groupCondition(group: ReviewGroup): SQL | undefined {
+  switch (group) {
+    case "attention":
+      return and(eq(reviews.status, "completed"), lt(reviews.score, ATTENTION_SCORE));
+    case "working":
+      return inArray(reviews.status, ["pending", "in_progress"]);
+    case "completed":
+      return and(eq(reviews.status, "completed"), or(gte(reviews.score, ATTENTION_SCORE), isNull(reviews.score)));
+    case "failed":
+      return eq(reviews.status, "failed");
+  }
+}
+
+/** Escape LIKE wildcards so a search for "100%" matches literally. */
+function likePattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
 export interface ReviewListItem {
@@ -228,14 +257,32 @@ export class ReviewPersistenceService {
   // ─── Reads ───────────────────────────────────────────────────────────────
 
   /** Last 20 reviews for a user, with issues — two queries, not 1 + N. */
-  async getUserReviews(userId: string): Promise<ReviewListItem[]> {
-    const rows = await db
-      .select()
-      .from(reviews)
-      .where(eq(reviews.userId, userId))
-      .orderBy(desc(reviews.createdAt))
-      .limit(20);
-    if (rows.length === 0) return [];
+  async getUserReviews(
+    userId: string,
+    {
+      limit = 20,
+      offset = 0,
+      group,
+      q,
+    }: { limit?: number; offset?: number; group?: ReviewGroup; q?: string } = {}
+  ): Promise<{ items: ReviewListItem[]; total: number }> {
+    const where = and(
+      eq(reviews.userId, userId),
+      group ? groupCondition(group) : undefined,
+      q ? ilike(reviews.title, likePattern(q)) : undefined
+    );
+    const [rows, [{ total }]] = await Promise.all([
+      db
+        .select()
+        .from(reviews)
+        .where(where)
+        // id breaks createdAt ties so pages never overlap or skip rows.
+        .orderBy(desc(reviews.createdAt), desc(reviews.id))
+        .limit(limit)
+        .offset(offset),
+      db.select({ total: count() }).from(reviews).where(where),
+    ]);
+    if (rows.length === 0) return { items: [], total: Number(total) };
 
     const comments = await db
       .select()
@@ -248,7 +295,7 @@ export class ReviewPersistenceService {
       byReview.set(c.reviewId, list);
     }
 
-    return rows.map((r) => ({
+    const items = rows.map((r) => ({
       id: r.id,
       title: r.title,
       language: r.language,
@@ -258,6 +305,7 @@ export class ReviewPersistenceService {
       createdAt: r.createdAt,
       issues: (byReview.get(r.id) ?? []).map(toIssueItem),
     }));
+    return { items, total: Number(total) };
   }
 
   /** A single review scoped to its owner; null if missing or someone else's. */

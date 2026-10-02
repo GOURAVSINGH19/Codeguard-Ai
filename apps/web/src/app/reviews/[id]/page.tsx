@@ -5,6 +5,7 @@ import { pollReview } from "@/lib/poll-review";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "@/components/ui/SeverityBadge";
+import { PixelLoaderBlock } from "@/components/ui/PixelLoader";
 
 interface Issue {
   id?: string;
@@ -69,16 +70,13 @@ export default function ReviewDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 gap-4">
-        <div className="w-10 h-10 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-        <p className="text-sm text-zinc-400">Loading review...</p>
-      </div>
+      <PixelLoaderBlock label="Loading review" className="min-h-[70vh]" />
     );
   }
 
   if (error || !review) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6">
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6">
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 max-w-md w-full text-center flex flex-col items-center gap-4">
           <span className="text-4xl">⚠️</span>
           <h2 className="text-lg font-bold text-white">Review Not Found</h2>
@@ -101,7 +99,7 @@ export default function ReviewDetailPage() {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 sm:p-8">
+    <div className="min-h-[70vh] text-zinc-100 p-4 sm:p-8">
       <div className="max-w-4xl mx-auto flex flex-col gap-7">
 
         {/* Nav */}

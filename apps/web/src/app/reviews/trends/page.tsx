@@ -5,6 +5,8 @@ import { useUser } from "@clerk/nextjs";
 import ScoreTrendChart from "@/components/charts/ScoreTrendChart";
 import IssueCategoryChart from "@/components/charts/IssueCategoryChart";
 import ReviewVelocityChart from "@/components/charts/ReviewVelocityChart";
+import { PixelLoaderBlock } from "@/components/ui/PixelLoader";
+import InstallGate from "@/components/InstallGate";
 
 interface TrendsData {
   scoreTrend: Array<{ date: string; avgScore: number; count: number }>;
@@ -14,7 +16,15 @@ interface TrendsData {
   usage?: { reviews: number; totalTokens: number; avgTokensPerReview: number; avgDurationMs: number };
 }
 
-export default function TrendsDashboard() {
+export default function TrendsPage() {
+  return (
+    <InstallGate>
+      <TrendsDashboard />
+    </InstallGate>
+  );
+}
+
+function TrendsDashboard() {
   const { isSignedIn } = useUser();
   const [data, setData] = useState<TrendsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,11 +111,7 @@ export default function TrendsDashboard() {
       )}
 
       {loading ? (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-72 bg-zinc-900/50 border border-zinc-800 rounded-2xl animate-pulse" />
-          ))}
-        </div>
+        <PixelLoaderBlock className="min-h-[50vh]" />
       ) : data ? (
         <>
           {/* Score Trend + Velocity */}

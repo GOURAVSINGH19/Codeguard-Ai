@@ -1,6 +1,7 @@
 # Dependencies
 node_modules
 **/node_modules
+.claude
 
 # Environment & Secret files
 .env

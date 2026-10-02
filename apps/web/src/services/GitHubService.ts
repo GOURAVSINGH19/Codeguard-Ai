@@ -102,10 +102,11 @@ export class GitHubService {
   /**
    * List repos for the authenticated user, sorted by last updated.
    */
-  async listRepos(): Promise<GitHubRepo[]> {
+  async listRepos({ page = 1, perPage = 50 }: { page?: number; perPage?: number } = {}): Promise<GitHubRepo[]> {
     const { data } = await this.octokit.rest.repos.listForAuthenticatedUser({
       sort: "updated",
-      per_page: 50,
+      per_page: perPage,
+      page,
     });
 
     return data.map((repo) => ({
@@ -124,12 +125,17 @@ export class GitHubService {
   /**
    * List open pull requests for a given repo.
    */
-  async listOpenPRs(owner: string, repo: string): Promise<GitHubPR[]> {
+  async listOpenPRs(
+    owner: string,
+    repo: string,
+    { page = 1, perPage = 30 }: { page?: number; perPage?: number } = {}
+  ): Promise<GitHubPR[]> {
     const { data } = await this.octokit.rest.pulls.list({
       owner,
       repo,
       state: "open",
-      per_page: 30,
+      per_page: perPage,
+      page,
     });
 
     return data.map((pr) => ({
