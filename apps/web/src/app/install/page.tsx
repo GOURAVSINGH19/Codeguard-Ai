@@ -1,11 +1,13 @@
 "use client";
 
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SignInButton, useUser } from "@clerk/nextjs";
 import {
   ArrowSquareOut,
   Buildings,
+  CaretLeft,
+  CaretRight,
   CheckCircle,
   GithubLogo,
   Globe,
@@ -18,6 +20,8 @@ import {
 } from "@phosphor-icons/react";
 import PixelLoader, { PixelLoaderBlock } from "@/components/ui/PixelLoader";
 import { InstallPrompt } from "@/components/InstallGate";
+import { INSTALL_URL } from "@/components/InstallButton";
+import { PageSkeleton, Skeleton } from "@/components/ui/PixelSkeleton";
 
 const INSTALL_ERRORS: Record<string, string> = {
   not_authenticated: "Please sign in before installing the GitHub App.",
@@ -28,8 +32,7 @@ const INSTALL_ERRORS: Record<string, string> = {
   install_failed: "Installation failed. Please try again.",
 };
 
-// Starts the install/configure flow server-side (sets the CSRF state cookie).
-const INSTALL_URL = "/api/github/app/install";
+const REPO_PAGE_SIZE = 20;
 
 interface Installation {
   id: string;
@@ -43,6 +46,7 @@ interface Installation {
   createdAt: string;
 }
 
+/** A repository the GitHub App was granted access to. */
 interface Repository {
   id: number;
   fullName: string;
@@ -50,12 +54,13 @@ interface Repository {
   name: string;
   private: boolean;
   language: string | null;
+  description: string | null;
   autoReviewEnabled: boolean;
   htmlUrl: string;
-  installationId: string | null;
+  account: string | null;
 }
 
-type RepoFilter = "all" | "enabled" | "no-access";
+type RepoFilter = "all" | "enabled";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong";
@@ -83,11 +88,7 @@ function InstallPageContent() {
   const searchParams = useSearchParams();
 
   const [installations, setInstallations] = useState<Installation[]>([]);
-  const [repos, setRepos] = useState<Repository[]>([]);
-  const [reposPage, setReposPage] = useState(1);
-  const [reposHasMore, setReposHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   // Result of the GitHub App callback (/install?success=true or ?error=<code>)
@@ -101,16 +102,10 @@ function InstallPageContent() {
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    Promise.all([
-      fetch("/api/github/app/installations").then((r) => (r.ok ? r.json() : { installations: [] })),
-      fetch("/api/github/repos?page=1").then((r) => (r.ok ? r.json() : { repos: [], hasMore: false })),
-    ])
-      .then(([instJson, repoJson]) => {
-        if (cancelled) return;
-        setInstallations(instJson.installations ?? []);
-        setRepos(repoJson.repos ?? []);
-        setReposPage(1);
-        setReposHasMore(!!repoJson.hasMore);
+    fetch("/api/github/app/installations", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { installations: [] }))
+      .then((json) => {
+        if (!cancelled) setInstallations(json.installations ?? []);
       })
       .catch((err) => {
         if (!cancelled) setNotice({ kind: "error", text: errorMessage(err) });
@@ -134,42 +129,9 @@ function InstallPageContent() {
     return () => clearTimeout(t);
   }, [notice]);
 
-  const loadMoreRepos = async () => {
-    if (loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const next = reposPage + 1;
-      const r = await fetch(`/api/github/repos?page=${next}`);
-      const json = await r.json();
-      if (!r.ok) throw new Error(json.error || "Failed to load repositories");
-      setRepos((prev) => [...prev, ...(json.repos ?? [])]);
-      setReposPage(next);
-      setReposHasMore(!!json.hasMore);
-    } catch (err) {
-      setNotice({ kind: "error", text: errorMessage(err) });
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const toggleAutoReview = async (repo: Repository) => {
-    const enabled = !repo.autoReviewEnabled;
-    // Optimistic — roll back if the server refuses.
-    setRepos((prev) => prev.map((r) => (r.id === repo.id ? { ...r, autoReviewEnabled: enabled } : r)));
-    try {
-      const res = await fetch(`/api/github/repos/${repo.owner}/${repo.name}/auto-review`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Could not update auto-review");
-      }
-    } catch (err) {
-      setRepos((prev) => prev.map((r) => (r.id === repo.id ? { ...r, autoReviewEnabled: !enabled } : r)));
-      setNotice({ kind: "error", text: errorMessage(err) });
-    }
+  const reload = () => {
+    setLoading(true);
+    setReloadKey((k) => k + 1);
   };
 
   const uninstall = async (inst: Installation) => {
@@ -179,15 +141,14 @@ function InstallPageContent() {
       return;
     }
     setNotice({ kind: "success", text: `Uninstalled from ${inst.accountLogin}.` });
-    setLoading(true);
-    setReloadKey((k) => k + 1);
+    reload();
   };
 
   const activeInstalls = installations.filter((i) => i.status !== "deleted");
 
   if (!isLoaded) return <PixelLoaderBlock className="min-h-[70vh]" />;
   if (!isSignedIn) return <SignedOut />;
-  if (loading) return <PixelLoaderBlock className="min-h-[70vh]" />;
+  if (loading) return <PageSkeleton filters={0} rows={6} cols={3} />;
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 md:px-6 pt-4 pb-10 flex flex-col gap-5">
@@ -195,15 +156,10 @@ function InstallPageContent() {
 
       {activeInstalls.length === 0 ? (
         <InstallPrompt
-          action={
-            <a
-              href={INSTALL_URL}
-              className="h-9 px-4 flex items-center gap-2 rounded bg-cg-text text-cg-bg text-sm font-medium hover:opacity-90 transition"
-            >
-              <GithubLogo size={16} weight="fill" />
-              Install GitHub App
-            </a>
-          }
+          onInstalled={() => {
+            setNotice({ kind: "success", text: "GitHub App installed. Here are the repositories you gave it access to." });
+            reload();
+          }}
         />
       ) : (
         <>
@@ -214,6 +170,8 @@ function InstallPageContent() {
             </div>
             <a
               href={INSTALL_URL}
+              target="_blank"
+              rel="noreferrer"
               className="h-8 px-3 flex items-center gap-1.5 self-start sm:self-auto rounded border border-cg-border bg-cg-raised text-sm text-cg-text hover:bg-cg-border/60 transition"
             >
               <Plus size={14} />
@@ -230,11 +188,9 @@ function InstallPageContent() {
           </Section>
 
           <RepositoriesSection
-            repos={repos}
-            hasMore={reposHasMore}
-            loadingMore={loadingMore}
-            onLoadMore={loadMoreRepos}
-            onToggle={toggleAutoReview}
+            key={reloadKey}
+            installations={activeInstalls}
+            onError={(text) => setNotice({ kind: "error", text })}
           />
         </>
       )}
@@ -319,48 +275,120 @@ function InstallationRow({ inst, onUninstall }: { inst: Installation; onUninstal
   );
 }
 
+/**
+ * Repositories the app was granted on GitHub. Searching, filtering and paging
+ * happen server-side; the first load also re-syncs the grant from GitHub so
+ * repos added or removed there appear without waiting for a webhook.
+ */
 function RepositoriesSection({
-  repos,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-  onToggle,
+  installations,
+  onError,
 }: {
-  repos: Repository[];
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
-  onToggle: (repo: Repository) => void;
+  installations: Installation[];
+  onError: (message: string) => void;
 }) {
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ all: 0, enabled: 0 });
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<RepoFilter>("all");
+  const [loading, setLoading] = useState(true);
+  // First request re-syncs from GitHub; "Sync from GitHub" sets it again.
+  const [syncing, setSyncing] = useState(true);
+  const [version, setVersion] = useState(0);
 
-  const counts = useMemo(
-    () => ({
-      all: repos.length,
-      enabled: repos.filter((r) => r.autoReviewEnabled).length,
-      "no-access": repos.filter((r) => !r.installationId).length,
-    }),
-    [repos]
-  );
+  // Debounce search into the server query.
+  useEffect(() => {
+    const next = search.trim();
+    if (next === query) return;
+    const t = setTimeout(() => {
+      setLoading(true);
+      setPage(1);
+      setQuery(next);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search, query]);
 
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return repos.filter((r) => {
-      if (filter === "enabled" && !r.autoReviewEnabled) return false;
-      if (filter === "no-access" && r.installationId) return false;
-      return !q || r.fullName.toLowerCase().includes(q);
-    });
-  }, [repos, search, filter]);
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ page: String(page), pageSize: String(REPO_PAGE_SIZE), filter });
+    if (query) params.set("q", query);
+    if (syncing) params.set("sync", "1");
 
+    fetch(`/api/github/app/repositories?${params}`, { cache: "no-store" })
+      .then(async (r) => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || "Failed to load repositories");
+        if (cancelled) return;
+        setRepos(json.repos ?? []);
+        setTotal(json.total ?? 0);
+        setCounts(json.counts ?? { all: 0, enabled: 0 });
+      })
+      .catch((err) => {
+        if (!cancelled) onError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+          setSyncing(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `syncing` is read per request rather than being a trigger of its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, query, filter, version]);
+
+  const changeFilter = (f: RepoFilter) => {
+    if (f === filter) return;
+    setLoading(true);
+    setPage(1);
+    setFilter(f);
+  };
+  const goTo = (p: number) => {
+    setLoading(true);
+    setPage(p);
+  };
+  const resync = () => {
+    setLoading(true);
+    setSyncing(true);
+    setVersion((v) => v + 1);
+  };
+
+  const toggle = async (repo: Repository) => {
+    const enabled = !repo.autoReviewEnabled;
+    const apply = (on: boolean) => {
+      setRepos((prev) => prev.map((r) => (r.id === repo.id ? { ...r, autoReviewEnabled: on } : r)));
+      setCounts((c) => ({ ...c, enabled: c.enabled + (on ? 1 : -1) }));
+    };
+    apply(enabled); // optimistic
+    try {
+      const res = await fetch(`/api/github/repos/${repo.owner}/${repo.name}/auto-review`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Could not update auto-review");
+      }
+    } catch (err) {
+      apply(!enabled);
+      onError(errorMessage(err));
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / REPO_PAGE_SIZE));
   const FILTERS: { id: RepoFilter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "enabled", label: "Auto-review on" },
-    { id: "no-access", label: "No app access" },
   ];
 
   return (
-    <Section title="Repositories" count={repos.length}>
+    <Section title="Repositories with access" count={counts.all}>
       <div className="px-4 pb-3 flex flex-wrap items-center gap-2 border-b border-cg-border">
         <div className="relative flex-1 min-w-[180px] max-w-xs">
           <MagnifyingGlass size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cg-subtle" />
@@ -375,7 +403,7 @@ function RepositoriesSection({
           {FILTERS.map((f) => (
             <button
               key={f.id}
-              onClick={() => setFilter(f.id)}
+              onClick={() => changeFilter(f.id)}
               className={`h-8 px-2.5 rounded text-xs flex items-center gap-1.5 transition ${
                 filter === f.id ? "bg-cg-raised text-cg-text" : "text-cg-subtle hover:text-cg-text"
               }`}
@@ -385,15 +413,61 @@ function RepositoriesSection({
             </button>
           ))}
         </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={resync}
+            disabled={loading}
+            className="h-8 px-2.5 rounded text-xs text-cg-muted hover:text-cg-text transition disabled:opacity-50"
+          >
+            {syncing ? <PixelLoader label="Syncing" className="!text-xs" /> : "Sync from GitHub"}
+          </button>
+          {installations.length === 1 && (
+            <a
+              href={githubSettingsUrl(installations[0])}
+              target="_blank"
+              rel="noreferrer"
+              className="h-8 px-2.5 flex items-center gap-1.5 rounded border border-cg-border text-xs text-cg-muted hover:text-cg-text hover:bg-cg-raised transition"
+            >
+              Manage access
+              <ArrowSquareOut size={12} />
+            </a>
+          )}
+        </div>
       </div>
 
-      {visible.length === 0 ? (
-        <p className="py-10 text-center text-sm text-cg-subtle">
-          {repos.length === 0 ? "No repositories yet. Give the app access to a repository on GitHub." : "No matching repositories."}
-        </p>
+      {loading && repos.length === 0 ? (
+        <div className="px-4 py-4 flex flex-col gap-4">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="h-4 w-4 shrink-0" />
+              <div className="flex-1 flex flex-col gap-2">
+                <Skeleton className="h-3.5 w-1/2" />
+                <Skeleton className="h-2.5 w-1/4" />
+              </div>
+              <Skeleton className="h-5 w-9 !rounded-full" />
+            </div>
+          ))}
+        </div>
+      ) : repos.length === 0 ? (
+        <div className="py-10 flex flex-col items-center gap-3 text-center">
+          <p className="text-sm text-cg-subtle">
+            {query || filter !== "all" ? "No matching repositories." : "The app doesn't have access to any repositories yet."}
+          </p>
+          {!query && filter === "all" && installations[0] && (
+            <a
+              href={githubSettingsUrl(installations[0])}
+              target="_blank"
+              rel="noreferrer"
+              className="h-8 px-3 flex items-center gap-1.5 rounded border border-cg-border text-sm text-cg-text hover:bg-cg-raised transition"
+            >
+              Choose repositories on GitHub
+              <ArrowSquareOut size={13} />
+            </a>
+          )}
+        </div>
       ) : (
-        <ul className="divide-y divide-cg-border">
-          {visible.map((repo) => (
+        <ul className={`divide-y divide-cg-border transition-opacity ${loading ? "opacity-50" : ""}`}>
+          {repos.map((repo) => (
             <li key={repo.id} className="px-4 py-3 flex items-center gap-3 hover:bg-cg-raised/50 transition-colors">
               {repo.private ? (
                 <LockSimple size={15} className="text-cg-subtle shrink-0" aria-label="Private" />
@@ -409,40 +483,45 @@ function RepositoriesSection({
                 >
                   {repo.fullName}
                 </a>
-                <p className="text-xs text-cg-subtle mt-0.5">
-                  {repo.language ?? "—"}
-                  {!repo.installationId && <span className="text-amber-300/90"> · App doesn&apos;t have access</span>}
+                <p className="text-xs text-cg-subtle mt-0.5 truncate">
+                  {[repo.language, repo.private ? "Private" : "Public", installations.length > 1 && repo.account ? `via ${repo.account}` : null]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
               </div>
-              {repo.installationId ? (
-                <Switch
-                  checked={repo.autoReviewEnabled}
-                  onChange={() => onToggle(repo)}
-                  label={`Auto-review ${repo.fullName}`}
-                />
-              ) : (
-                <a
-                  href={INSTALL_URL}
-                  className="text-xs text-cg-muted hover:text-cg-text underline-offset-4 hover:underline shrink-0"
-                >
-                  Grant access
-                </a>
-              )}
+              <span className="hidden sm:inline text-xs text-cg-subtle">{repo.autoReviewEnabled ? "Auto-review on" : "Off"}</span>
+              <Switch checked={repo.autoReviewEnabled} onChange={() => toggle(repo)} label={`Auto-review ${repo.fullName}`} />
             </li>
           ))}
         </ul>
       )}
 
-      {hasMore && !search.trim() && filter === "all" && (
+      {totalPages > 1 && (
         <div className="px-4 py-3 border-t border-cg-border flex items-center justify-between text-xs text-cg-subtle">
-          <span className="tabular-nums">Showing {repos.length}</span>
-          <button
-            onClick={onLoadMore}
-            disabled={loadingMore}
-            className="h-7 px-2.5 rounded border border-cg-border text-cg-muted hover:text-cg-text hover:bg-cg-raised transition disabled:pointer-events-none"
-          >
-            {loadingMore ? <PixelLoader className="!text-xs" /> : "Load more"}
-          </button>
+          <span className="tabular-nums">
+            {(page - 1) * REPO_PAGE_SIZE + 1}–{Math.min(page * REPO_PAGE_SIZE, total)} of {total}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              aria-label="Previous page"
+              onClick={() => goTo(page - 1)}
+              disabled={page <= 1 || loading}
+              className="h-7 w-7 flex items-center justify-center rounded border border-cg-border text-cg-muted hover:text-cg-text hover:bg-cg-raised transition disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <CaretLeft size={13} />
+            </button>
+            <span className="px-2 tabular-nums">
+              {page} / {totalPages}
+            </span>
+            <button
+              aria-label="Next page"
+              onClick={() => goTo(page + 1)}
+              disabled={page >= totalPages || loading}
+              className="h-7 w-7 flex items-center justify-center rounded border border-cg-border text-cg-muted hover:text-cg-text hover:bg-cg-raised transition disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <CaretRight size={13} />
+            </button>
+          </div>
         </div>
       )}
     </Section>

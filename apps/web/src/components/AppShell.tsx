@@ -3,9 +3,8 @@
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { SignInButton, Show, UserButton, useUser } from "@clerk/nextjs";
+import { SignInButton, Show, useUser } from "@clerk/nextjs";
 import {
-  BookOpen,
   CaretDown,
   ChartBar,
   ChartPieSlice,
@@ -20,7 +19,8 @@ import {
   SquaresFour,
 } from "@phosphor-icons/react";
 import CommandPalette from "./CommandPalette";
-import { NEW_REVIEW_EVENT } from "@/lib/events";
+import AccountMenu from "./AccountMenu";
+import { APP_INSTALLED_EVENT, NEW_REVIEW_EVENT } from "@/lib/events";
 
 type Icon = React.ComponentType<{ size?: number; className?: string; weight?: "regular" | "fill" | "bold" }>;
 type NavLeaf = { href: string; label: string; icon: Icon };
@@ -57,6 +57,7 @@ function breadcrumb(pathname: string): string[] {
   if (pathname.startsWith("/reviews/trends")) return ["Dashboard", "Reports"];
   if (pathname.startsWith("/reviews/")) return ["Reviews", "Review"];
   if (pathname.startsWith("/install")) return ["Integrations", "GitHub App"];
+  if (pathname.startsWith("/profile")) return ["Account", "Profile settings"];
   return ["Dashboard"];
 }
 
@@ -101,6 +102,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ analytics: true, integrations: true });
   const [recents, setRecents] = useState<RecentReview[] | null>(null);
+  // Recents stay empty until the GitHub App is installed (null = still checking).
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  const [installVersion, setInstallVersion] = useState(0);
+
+  useEffect(() => {
+    const onInstalled = () => setInstallVersion((v) => v + 1);
+    window.addEventListener(APP_INSTALLED_EVENT, onInstalled);
+    return () => window.removeEventListener(APP_INSTALLED_EVENT, onInstalled);
+  }, []);
 
   // Ctrl/⌘ K opens search from anywhere.
   useEffect(() => {
@@ -114,14 +124,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Recent reviews — refreshed on navigation so a just-finished review shows up.
+  // Recent reviews — refreshed on navigation so a just-finished review (or a
+  // fresh install) shows up. Nothing is listed until the app is installed.
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    fetch("/api/reviews?page=1&pageSize=5")
-      .then((r) => (r.ok ? r.json() : { reviews: [] }))
-      .then((json) => {
-        if (!cancelled) setRecents(json.reviews ?? []);
+    fetch("/api/github/app/installations")
+      .then((r) => (r.ok ? r.json() : { installations: [] }))
+      .then(async (json: { installations?: { status: string }[] }) => {
+        const hasApp = (json.installations ?? []).some((i) => i.status === "active");
+        if (cancelled) return;
+        setInstalled(hasApp);
+        if (!hasApp) return setRecents([]);
+        const r = await fetch("/api/reviews?page=1&pageSize=5");
+        const reviews = r.ok ? ((await r.json()).reviews ?? []) : [];
+        if (!cancelled) setRecents(reviews);
       })
       .catch(() => {
         if (!cancelled) setRecents([]);
@@ -129,7 +146,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isSignedIn, pathname]);
+  }, [isSignedIn, pathname, installVersion]);
 
   if (BARE_ROUTES.some((r) => pathname.startsWith(r))) return <>{children}</>;
 
@@ -150,9 +167,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside
-        className={`hidden md:flex shrink-0 flex-col sticky top-0 h-screen py-3 transition-[width] duration-200 ${
-          collapsed ? "w-14 px-2" : "w-64 px-2"
-        }`}
+        className={`hidden md:flex shrink-0 flex-col sticky top-0 h-screen py-3 transition-[width] duration-200 ${collapsed ? "w-14 px-2" : "w-64 px-2"
+          }`}
       >
         {/* Account row */}
         <div className={`h-8 flex items-center ${collapsed ? "justify-center" : "gap-2 px-2"}`}>
@@ -185,7 +201,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <button
             onClick={() => setPaletteOpen(true)}
             title="Search (Ctrl K)"
-            className={`${itemBase} ${itemIdle} ${collapsed ? "justify-center" : "px-2"}`}
+            className={`${itemBase} ${itemIdle} cursor-pointer ${collapsed ? "justify-center" : "px-2"}`}
           >
             <MagnifyingGlass size={16} />
             {!collapsed && (
@@ -199,7 +215,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <button
               onClick={startNewReview}
               title="New review"
-              className={`${itemBase} ${itemIdle} ${collapsed ? "justify-center" : "px-2"}`}
+              className={`${itemBase} ${itemIdle} cursor-pointer ${collapsed ? "justify-center" : "px-2"}`}
             >
               <Plus size={16} />
               {!collapsed && <span>New review</span>}
@@ -214,58 +230,57 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {collapsed
             ? NAV.flatMap((g) => g.items).map((item) => {
-                const active = isActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    title={item.label}
-                    className={`${itemBase} justify-center ${active ? "bg-cg-raised text-cg-accent" : itemIdle}`}
-                  >
-                    <item.icon size={16} weight={active ? "fill" : "regular"} />
-                  </Link>
-                );
-              })
+              const active = isActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  title={item.label}
+                  className={`${itemBase} justify-center ${active ? "bg-cg-raised text-cg-accent" : itemIdle}`}
+                >
+                  <item.icon size={16} weight={active ? "fill" : "regular"} />
+                </Link>
+              );
+            })
             : NAV.map((group) => {
-                const open = openGroups[group.id];
-                const groupActive = group.items.some((i) => isActive(pathname, i.href));
-                return (
-                  <div key={group.id} className="flex flex-col">
-                    <button
-                      onClick={() => setOpenGroups((s) => ({ ...s, [group.id]: !open }))}
-                      aria-expanded={open}
-                      className={`${itemBase} px-2 ${groupActive ? "bg-cg-raised text-cg-text" : itemIdle}`}
-                    >
-                      <group.icon size={16} />
-                      <span className="flex-1 text-left">{group.label}</span>
-                      <CaretDown
-                        size={12}
-                        className={`text-cg-subtle transition-transform ${open ? "rotate-180" : ""}`}
-                      />
-                    </button>
-                    {open && (
-                      <div className="ml-[15px] my-1 flex flex-col border-l border-cg-border">
-                        {group.items.map((item) => {
-                          const active = isActive(pathname, item.href);
-                          return (
-                            <Link
-                              key={item.href}
-                              href={item.href}
-                              className={`-ml-px pl-4 h-8 flex items-center text-sm border-l transition-colors ${
-                                active
-                                  ? "border-cg-accent text-cg-accent"
-                                  : "border-transparent text-cg-muted hover:text-cg-text"
+              const open = openGroups[group.id];
+              const groupActive = group.items.some((i) => isActive(pathname, i.href));
+              return (
+                <div key={group.id} className="flex flex-col">
+                  <button
+                    onClick={() => setOpenGroups((s) => ({ ...s, [group.id]: !open }))}
+                    aria-expanded={open}
+                    className={`${itemBase} px-2 ${groupActive ? "bg-cg-raised text-cg-text" : itemIdle}`}
+                  >
+                    <group.icon size={16} />
+                    <span className="flex-1 text-left">{group.label}</span>
+                    <CaretDown
+                      size={12}
+                      className={`text-cg-subtle transition-transform ${open ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  {open && (
+                    <div className="ml-[15px] my-1 flex flex-col border-l border-cg-border">
+                      {group.items.map((item) => {
+                        const active = isActive(pathname, item.href);
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            className={`-ml-px pl-4 h-8 flex items-center text-sm border-l transition-colors ${active
+                              ? "border-cg-accent text-cg-accent"
+                              : "border-transparent text-cg-muted hover:text-cg-text"
                               }`}
-                            >
-                              {item.label}
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                          >
+                            {item.label}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
           {/* Recents */}
           {isSignedIn && !collapsed && (
@@ -274,22 +289,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <p className="px-2 pb-1 text-xs text-cg-subtle">Recents</p>
               {recents === null ? null : recents.length === 0 ? (
                 <div className="mx-0.5 rounded border border-dashed border-cg-border px-3 py-4 flex flex-col items-center gap-2 text-center">
-                  <p className="text-xs text-cg-muted">No reviews requested by you yet.</p>
-                  <button
-                    onClick={startNewReview}
-                    className="h-7 px-2.5 rounded bg-cg-raised text-xs text-cg-text hover:bg-cg-border/60 transition"
-                  >
-                    New review
-                  </button>
+                  <p className="text-xs text-cg-muted">
+                    {installed ? "No reviews requested by you yet." : "No recents"}
+                  </p>
+                  {installed && (
+                    <button
+                      onClick={startNewReview}
+                      className="h-7 px-2.5 rounded bg-cg-raised text-xs text-cg-text hover:bg-cg-border/60 transition"
+                    >
+                      New review
+                    </button>
+                  )}
                 </div>
               ) : (
                 recents.map((r) => (
                   <Link
                     key={r.id}
                     href={`/reviews/${r.id}`}
-                    className={`${itemBase} px-2 ${
-                      pathname === `/reviews/${r.id}` ? "bg-cg-raised text-cg-text" : itemIdle
-                    }`}
+                    className={`${itemBase} px-2 ${pathname === `/reviews/${r.id}` ? "bg-cg-raised text-cg-text" : itemIdle
+                      }`}
                   >
                     <GitPullRequest size={15} className="shrink-0" />
                     <span className="truncate">{r.title || "Untitled review"}</span>
@@ -317,35 +335,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </>
           )}
           <div className="my-2 border-t border-cg-border" />
-          <a
-            href="https://docs.github.com/en/apps"
-            target="_blank"
-            rel="noreferrer"
-            title="Documentation"
-            className={`${itemBase} ${itemIdle} ${collapsed ? "justify-center" : "px-2"}`}
-          >
-            <BookOpen size={16} />
-            {!collapsed && "Documentation"}
-          </a>
 
           <Show when="signed-in">
-            <div className={`mt-1 flex items-center gap-2.5 py-1.5 ${collapsed ? "justify-center" : "px-2"}`}>
-              <UserButton appearance={{ elements: { avatarBox: "w-7 h-7" } }} />
-              {!collapsed && (
-                <div className="min-w-0 leading-tight">
-                  <p className="text-sm text-cg-text truncate">{user?.fullName || displayName}</p>
-                  <p className="text-xs text-cg-subtle truncate">{user?.username ? `@${user.username}` : "GitHub"}</p>
-                </div>
-              )}
+            <div className="mt-1">
+              <AccountMenu collapsed={collapsed} />
             </div>
           </Show>
           <Show when="signed-out">
             <SignInButton mode="modal">
               <button
                 title="Sign in with GitHub"
-                className={`mt-1 flex items-center justify-center gap-2 h-8 rounded bg-cg-text text-cg-bg text-sm font-medium hover:opacity-90 transition ${
-                  collapsed ? "" : "mx-1"
-                }`}
+                className={`mt-1 flex items-center justify-center gap-2 h-8 rounded bg-cg-text text-cg-bg text-sm font-medium hover:opacity-90 transition ${collapsed ? "" : "mx-1"
+                  }`}
               >
                 <GithubLogo size={15} weight="fill" />
                 {!collapsed && "Sign in with GitHub"}
@@ -389,7 +390,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               ))}
               <Show when="signed-in">
-                <UserButton appearance={{ elements: { avatarBox: "w-6 h-6 ml-1" } }} />
+                <div className="ml-1">
+                  <AccountMenu placement="header" />
+                </div>
               </Show>
             </div>
           </header>

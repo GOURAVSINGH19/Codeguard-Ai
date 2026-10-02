@@ -26,6 +26,7 @@ import {
 import PRReviewer from "./PRReviewer";
 import PixelLoader, { PixelLoaderBlock } from "./ui/PixelLoader";
 import { NEW_REVIEW_EVENT } from "@/lib/events";
+import { PageSkeleton } from "./ui/PixelSkeleton";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type Group = "attention" | "working" | "completed" | "failed";
@@ -161,7 +162,7 @@ export default function ReviewerDashboard() {
   if (!isLoaded) return <PixelLoaderBlock className="min-h-[70vh]" />;
   if (!isSignedIn) return <SignedOutState />;
   // First load only — later refreshes keep the page on screen.
-  if (loading && !trends) return <PixelLoaderBlock className="min-h-[70vh]" />;
+  if (loading && !trends) return <PageSkeleton filters={4} rows={6} cols={4} />;
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 md:px-6 pt-4 pb-10 flex flex-col gap-5">

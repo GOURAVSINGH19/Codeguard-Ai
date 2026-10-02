@@ -1,6 +1,6 @@
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { db, githubInstallations, repositories, eq } from "@codeguard/db";
+import { db, githubInstallations, repositories, eq, and, notInArray } from "@codeguard/db";
 import { getGitHubAppConfig, getGitHubAppOAuthConfig } from "@codeguard/config";
 import type { GitHubAppConfig } from "@codeguard/config";
 
@@ -209,6 +209,19 @@ export class GitHubAppService {
           },
         });
     }
+
+    // Repos the owner has since removed from the app's access.
+    const live = repos.map((r) => r.id);
+    await db
+      .update(repositories)
+      .set({ status: "inactive", updatedAt: new Date() })
+      .where(
+        and(
+          eq(repositories.installationId, installation.id),
+          eq(repositories.status, "active"),
+          live.length ? notInArray(repositories.githubRepoId, live) : undefined
+        )
+      );
   }
 
   /** Installation that owns a repository, if the app is installed there. */

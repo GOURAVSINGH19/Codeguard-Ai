@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
-import { ArrowRight, ShieldCheck } from "@phosphor-icons/react";
+import { ShieldCheck } from "@phosphor-icons/react";
 import { PixelLoaderBlock } from "./ui/PixelLoader";
 import FlickeringGrid from "./ui/FlickeringGrid";
+import InstallButton from "./InstallButton";
 
 /**
  * Like CodeRabbit: nothing but the install prompt until the user has an
@@ -35,11 +35,19 @@ export default function InstallGate({ children }: { children: React.ReactNode })
   if (!isLoaded) return <PixelLoaderBlock className="min-h-[70vh]" />;
   if (!isSignedIn) return <>{children}</>;
   if (installed === null) return <PixelLoaderBlock className="min-h-[70vh]" />;
-  if (!installed) return <InstallPrompt />;
+  if (!installed) return <InstallPrompt onInstalled={() => setInstalled(true)} />;
   return <>{children}</>;
 }
 
-export function InstallPrompt({ action }: { action?: React.ReactNode } = {}) {
+export function InstallPrompt({
+  action,
+  onInstalled,
+}: {
+  /** Replaces the default install button. */
+  action?: React.ReactNode;
+  /** Called when the new installation is detected. Defaults to reloading the page. */
+  onInstalled?: () => void;
+} = {}) {
   const steps = [
     "Install the CodeGuard GitHub App on your account or organization.",
     "Choose the repositories you'd like reviewed.",
@@ -71,15 +79,7 @@ export function InstallPrompt({ action }: { action?: React.ReactNode } = {}) {
             </li>
           ))}
         </ol>
-        {action ?? (
-          <Link
-            href="/install"
-            className="h-9 px-4 flex items-center gap-2 rounded border border-cg-border bg-cg-raised text-sm text-cg-text hover:bg-cg-border/60 transition"
-          >
-            Install GitHub App
-            <ArrowRight size={14} />
-          </Link>
-        )}
+        {action ?? <InstallButton onInstalled={onInstalled ?? (() => window.location.reload())} />}
       </div>
     </div>
   );
