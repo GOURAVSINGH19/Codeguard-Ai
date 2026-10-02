@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useUser, SignInButton } from "@clerk/nextjs";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
@@ -21,9 +22,8 @@ import {
   WarningOctagon,
   XCircle,
   ArrowsClockwise,
-  X,
 } from "@phosphor-icons/react";
-import PRReviewer from "./PRReviewer";
+import RepoPulls from "./RepoPulls";
 import PixelLoader, { PixelLoaderBlock } from "./ui/PixelLoader";
 import { NEW_REVIEW_EVENT } from "@/lib/events";
 import { PageSkeleton } from "./ui/PixelSkeleton";
@@ -95,20 +95,15 @@ export default function ReviewerDashboard() {
   const [trends, setTrends] = useState<TrendsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
-  // Opened from the sidebar / command palette via /?new=1 or NEW_REVIEW_EVENT.
-  const [showReviewer, setShowReviewer] = useState(
-    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("new")
-  );
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Repository picked in the "New review" drawer (/?repo=owner/name).
+  const repoParam = searchParams.get("repo");
+  const selectedRepo = repoParam && /^[\w.-]+\/[\w.-]+$/.test(repoParam) ? repoParam : null;
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("new")) window.history.replaceState(null, "", "/");
-    const open = () => {
-      setShowReviewer(true);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    };
-    window.addEventListener(NEW_REVIEW_EVENT, open);
-    return () => window.removeEventListener(NEW_REVIEW_EVENT, open);
-  }, []);
+    if (selectedRepo) window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [selectedRepo]);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
 
@@ -182,19 +177,17 @@ export default function ReviewerDashboard() {
             <ArrowClockwise size={15} className={loading ? "animate-spin" : ""} />
           </button>
           <button
-            onClick={() => setShowReviewer((v) => !v)}
+            onClick={() => window.dispatchEvent(new Event(NEW_REVIEW_EVENT))}
             className="h-8 px-3 flex items-center gap-1.5 rounded border border-cg-border bg-cg-raised text-sm text-cg-text hover:bg-cg-border/60 transition"
           >
-            {showReviewer ? <X size={14} /> : <Plus size={14} />}
-            {showReviewer ? "Close" : "New review"}
+            <Plus size={14} />
+            New review
           </button>
         </div>
       </div>
 
-      {showReviewer && (
-        <section className="rounded-md border border-cg-border p-5">
-          <PRReviewer />
-        </section>
+      {selectedRepo && (
+        <RepoPulls key={selectedRepo} fullName={selectedRepo} onClose={() => router.replace("/", { scroll: false })} />
       )}
 
       {/* KPIs */}

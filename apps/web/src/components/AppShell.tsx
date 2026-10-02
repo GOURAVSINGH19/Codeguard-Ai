@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { SignInButton, Show, useUser } from "@clerk/nextjs";
@@ -20,7 +20,9 @@ import {
 } from "@phosphor-icons/react";
 import CommandPalette from "./CommandPalette";
 import AccountMenu from "./AccountMenu";
+import RepoDrawer from "./RepoDrawer";
 import { APP_INSTALLED_EVENT, NEW_REVIEW_EVENT } from "@/lib/events";
+import { getInstallations, hasActive } from "@/lib/installations";
 
 type Icon = React.ComponentType<{ size?: number; className?: string; weight?: "regular" | "fill" | "bold" }>;
 type NavLeaf = { href: string; label: string; icon: Icon };
@@ -105,6 +107,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // Recents stay empty until the GitHub App is installed (null = still checking).
   const [installed, setInstalled] = useState<boolean | null>(null);
   const [installVersion, setInstallVersion] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
+  // "New review" from anywhere (sidebar, dashboard, command palette).
+  useEffect(() => {
+    const open = () => setDrawerOpen(true);
+    window.addEventListener(NEW_REVIEW_EVENT, open);
+    return () => window.removeEventListener(NEW_REVIEW_EVENT, open);
+  }, []);
 
   useEffect(() => {
     const onInstalled = () => setInstallVersion((v) => v + 1);
@@ -129,10 +140,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    fetch("/api/github/app/installations")
-      .then((r) => (r.ok ? r.json() : { installations: [] }))
-      .then(async (json: { installations?: { status: string }[] }) => {
-        const hasApp = (json.installations ?? []).some((i) => i.status === "active");
+    // Cached across components and navigations (see lib/installations).
+    getInstallations()
+      .then(async (rows) => {
+        const hasApp = hasActive(rows);
         if (cancelled) return;
         setInstalled(hasApp);
         if (!hasApp) return setRecents([]);
@@ -153,10 +164,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const crumbs = breadcrumb(pathname);
   const displayName = user?.username || user?.firstName || "CodeGuard AI";
 
-  const startNewReview = () => {
-    if (pathname !== "/") router.push("/?new=1");
-    window.dispatchEvent(new Event(NEW_REVIEW_EVENT));
-  };
+  // No app yet → nothing to pick from; send them to install it.
+  const startNewReview = () => (installed ? setDrawerOpen(true) : router.push("/install"));
 
   const itemBase = "flex items-center gap-2.5 h-8 rounded text-sm transition-colors";
   const itemIdle = "text-cg-muted hover:text-cg-text hover:bg-cg-raised";
@@ -164,6 +173,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-cg-bg text-cg-text font-sans">
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {isSignedIn && installed && <RepoDrawer open={drawerOpen} onClose={closeDrawer} />}
 
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside

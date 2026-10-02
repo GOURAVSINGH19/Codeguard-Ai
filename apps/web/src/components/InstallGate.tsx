@@ -6,6 +6,7 @@ import { ShieldCheck } from "@phosphor-icons/react";
 import { PixelLoaderBlock } from "./ui/PixelLoader";
 import FlickeringGrid from "./ui/FlickeringGrid";
 import InstallButton from "./InstallButton";
+import { getInstallations, hasActive } from "@/lib/installations";
 
 /**
  * Like CodeRabbit: nothing but the install prompt until the user has an
@@ -19,14 +20,9 @@ export default function InstallGate({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    fetch("/api/github/app/installations")
-      .then((r) => (r.ok ? r.json() : { installations: [] }))
-      .then((json: { installations?: { status: string }[] }) => {
-        if (!cancelled) setInstalled((json.installations ?? []).some((i) => i.status === "active"));
-      })
-      .catch(() => {
-        if (!cancelled) setInstalled(false);
-      });
+    getInstallations().then((rows) => {
+      if (!cancelled) setInstalled(hasActive(rows));
+    });
     return () => {
       cancelled = true;
     };

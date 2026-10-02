@@ -4,26 +4,21 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowSquareOut, GithubLogo } from "@phosphor-icons/react";
 import PixelLoader from "./ui/PixelLoader";
 import { APP_INSTALLED_EVENT } from "@/lib/events";
+import { getInstallations, hasActive, invalidateInstallations } from "@/lib/installations";
 
 // Starts the install flow server-side (sets the CSRF state cookie, then redirects to GitHub).
 export const INSTALL_URL = "/api/github/app/install";
 
-const POLL_MS = 4000;
+const POLL_MS = 10_000;
 const GIVE_UP_MS = 10 * 60 * 1000;
-
-async function hasActiveInstallation(): Promise<boolean> {
-  const r = await fetch("/api/github/app/installations", { cache: "no-store" });
-  if (!r.ok) return false;
-  const json = (await r.json()) as { installations?: { status: string }[] };
-  return (json.installations ?? []).some((i) => i.status === "active");
-}
 
 /**
  * Opens the GitHub App install page in a new tab and waits here until the
  * installation shows up — so the user lands back in CodeGuard even when
  * GitHub doesn't redirect (no Setup URL, or installing an already-configured
- * account). Detection polls every few seconds and whenever this tab regains
- * focus; the server links the installation to the user on that request.
+ * account). Detection runs when this tab becomes visible again, and polls only
+ * while it is visible; the server links the installation to the user on that
+ * request.
  */
 export default function InstallButton({
   onInstalled,
@@ -39,29 +34,40 @@ export default function InstallButton({
   const [timedOut, setTimedOut] = useState(false);
   const startedAt = useRef(0);
 
+  const inFlight = useRef(false);
+
   const check = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setChecking(true);
     try {
-      if (await hasActiveInstallation()) {
+      if (hasActive(await getInstallations({ fresh: true }))) {
         setWaiting(false);
+        invalidateInstallations();
         window.dispatchEvent(new Event(APP_INSTALLED_EVENT));
         onInstalled();
       } else if (Date.now() - startedAt.current > GIVE_UP_MS) {
         setTimedOut(true);
       }
     } finally {
+      inFlight.current = false;
       setChecking(false);
     }
   }, [onInstalled]);
 
   useEffect(() => {
     if (!waiting || timedOut) return;
-    const t = setInterval(check, POLL_MS);
-    const onFocus = () => void check();
-    window.addEventListener("focus", onFocus);
+    // While the user is on the GitHub tab this page is hidden — no point asking.
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void check();
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(t);
-      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [waiting, timedOut, check]);
 

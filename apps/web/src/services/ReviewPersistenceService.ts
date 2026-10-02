@@ -4,6 +4,7 @@ import {
   reviewComments,
   repositories,
   pullRequests,
+  githubInstallations,
   eq,
   and,
   desc,
@@ -51,6 +52,20 @@ function groupCondition(group: ReviewGroup): SQL | undefined {
   }
 }
 
+/**
+ * Reviews a user may see: the ones they requested, plus automated reviews
+ * (user_id NULL) of pull requests in repositories their installation covers.
+ */
+function visibleTo(userId: string): SQL {
+  const ownedPRs = db
+    .select({ id: pullRequests.id })
+    .from(pullRequests)
+    .innerJoin(repositories, eq(pullRequests.repositoryId, repositories.id))
+    .innerJoin(githubInstallations, eq(repositories.installationId, githubInstallations.id))
+    .where(eq(githubInstallations.userId, userId));
+  return or(eq(reviews.userId, userId), and(isNull(reviews.userId), inArray(reviews.pullRequestId, ownedPRs)))!;
+}
+
 /** Escape LIKE wildcards so a search for "100%" matches literally. */
 function likePattern(q: string): string {
   return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -65,6 +80,9 @@ export interface ReviewListItem {
   reviewType: string;
   createdAt: Date;
   issues: ReviewIssueItem[];
+  /** "owner/name" for PR reviews. */
+  repo: string | null;
+  prNumber: number | null;
 }
 
 export interface ReviewDetail extends ReviewListItem {
@@ -73,7 +91,19 @@ export interface ReviewDetail extends ReviewListItem {
   summary: string | null;
   model: string | null;
   headSha: string | null;
-  pullRequest: { owner: string; repo: string; number: number; title: string } | null;
+  pullRequest: {
+    owner: string;
+    repo: string;
+    number: number;
+    title: string;
+    htmlUrl: string;
+    headBranch: string;
+    baseBranch: string;
+    authorLogin: string | null;
+    additions: number;
+    deletions: number;
+    changedFiles: number;
+  } | null;
   /** Safe subset of metadata for the UI (never raw errors). */
   details: { tokens: number | null; durationMs: number | null; githubUrl: string | null } | null;
 }
@@ -267,27 +297,34 @@ export class ReviewPersistenceService {
     }: { limit?: number; offset?: number; group?: ReviewGroup; q?: string } = {}
   ): Promise<{ items: ReviewListItem[]; total: number }> {
     const where = and(
-      eq(reviews.userId, userId),
+      visibleTo(userId),
       group ? groupCondition(group) : undefined,
-      q ? ilike(reviews.title, likePattern(q)) : undefined
+      q ? or(ilike(reviews.title, likePattern(q)), ilike(repositories.fullName, likePattern(q))) : undefined
     );
     const [rows, [{ total }]] = await Promise.all([
       db
-        .select()
+        .select({ review: reviews, repo: repositories.fullName, prNumber: pullRequests.prNumber })
         .from(reviews)
+        .leftJoin(pullRequests, eq(reviews.pullRequestId, pullRequests.id))
+        .leftJoin(repositories, eq(pullRequests.repositoryId, repositories.id))
         .where(where)
         // id breaks createdAt ties so pages never overlap or skip rows.
         .orderBy(desc(reviews.createdAt), desc(reviews.id))
         .limit(limit)
         .offset(offset),
-      db.select({ total: count() }).from(reviews).where(where),
+      db
+        .select({ total: count() })
+        .from(reviews)
+        .leftJoin(pullRequests, eq(reviews.pullRequestId, pullRequests.id))
+        .leftJoin(repositories, eq(pullRequests.repositoryId, repositories.id))
+        .where(where),
     ]);
     if (rows.length === 0) return { items: [], total: Number(total) };
 
     const comments = await db
       .select()
       .from(reviewComments)
-      .where(inArray(reviewComments.reviewId, rows.map((r) => r.id)));
+      .where(inArray(reviewComments.reviewId, rows.map((r) => r.review.id)));
     const byReview = new Map<string, typeof comments>();
     for (const c of comments) {
       const list = byReview.get(c.reviewId) ?? [];
@@ -295,7 +332,7 @@ export class ReviewPersistenceService {
       byReview.set(c.reviewId, list);
     }
 
-    const items = rows.map((r) => ({
+    const items = rows.map(({ review: r, repo, prNumber }) => ({
       id: r.id,
       title: r.title,
       language: r.language,
@@ -304,6 +341,8 @@ export class ReviewPersistenceService {
       reviewType: r.reviewType,
       createdAt: r.createdAt,
       issues: (byReview.get(r.id) ?? []).map(toIssueItem),
+      repo,
+      prNumber,
     }));
     return { items, total: Number(total) };
   }
@@ -313,15 +352,16 @@ export class ReviewPersistenceService {
     const [row] = await db
       .select({
         review: reviews,
-        prNumber: pullRequests.prNumber,
-        prTitle: pullRequests.title,
+        pr: pullRequests,
         repoOwner: repositories.owner,
         repoName: repositories.name,
+        repoFullName: repositories.fullName,
+        repoHtmlUrl: repositories.htmlUrl,
       })
       .from(reviews)
       .leftJoin(pullRequests, eq(reviews.pullRequestId, pullRequests.id))
       .leftJoin(repositories, eq(pullRequests.repositoryId, repositories.id))
-      .where(and(eq(reviews.id, reviewId), eq(reviews.userId, userId)))
+      .where(and(eq(reviews.id, reviewId), visibleTo(userId)))
       .limit(1);
     if (!row) return null;
 
@@ -343,9 +383,23 @@ export class ReviewPersistenceService {
       headSha: r.headSha,
       createdAt: r.createdAt,
       issues: comments.map(toIssueItem),
+      repo: row.repoFullName,
+      prNumber: row.pr?.prNumber ?? null,
       pullRequest:
-        row.prNumber != null && row.repoOwner && row.repoName
-          ? { owner: row.repoOwner, repo: row.repoName, number: row.prNumber, title: row.prTitle ?? "" }
+        row.pr && row.repoOwner && row.repoName
+          ? {
+              owner: row.repoOwner,
+              repo: row.repoName,
+              number: row.pr.prNumber,
+              title: row.pr.title,
+              htmlUrl: `${row.repoHtmlUrl ?? `https://github.com/${row.repoFullName}`}/pull/${row.pr.prNumber}`,
+              headBranch: row.pr.headBranch,
+              baseBranch: row.pr.baseBranch,
+              authorLogin: row.pr.authorLogin,
+              additions: row.pr.additions ?? 0,
+              deletions: row.pr.deletions ?? 0,
+              changedFiles: row.pr.changedFiles ?? 0,
+            }
           : null,
       details: {
         tokens: meta.usage?.totalTokens ?? null,

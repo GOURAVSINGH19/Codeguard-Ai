@@ -13,6 +13,7 @@ import {
 } from "@phosphor-icons/react";
 import PixelLoader from "@/components/ui/PixelLoader";
 import { Skeleton, SkeletonRegion, SkeletonText } from "@/components/ui/PixelSkeleton";
+import { getInstallations } from "@/lib/installations";
 
 interface Stats {
   reviews: number;
@@ -35,7 +36,7 @@ export default function ProfilePage() {
     let cancelled = false;
     Promise.all([
       fetch("/api/reviews?page=1&pageSize=1").then((r) => (r.ok ? r.json() : { total: 0 })),
-      fetch("/api/github/app/installations").then((r) => (r.ok ? r.json() : { installations: [] })),
+      getInstallations().then((installations) => ({ installations })),
     ])
       .then(([reviews, inst]) => {
         if (cancelled) return;

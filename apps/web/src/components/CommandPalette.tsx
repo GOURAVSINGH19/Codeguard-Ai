@@ -53,10 +53,11 @@ function Palette({ onClose }: { onClose: () => void }) {
       {
         id: "a:new",
         label: "New review",
-        hint: "Review an open pull request",
+        hint: "Pick a repository to review",
         icon: Plus,
         run: () => {
-          go("/?new=1");
+          onClose();
+          // AppShell opens the repository drawer.
           window.dispatchEvent(new Event(NEW_REVIEW_EVENT));
         },
       },

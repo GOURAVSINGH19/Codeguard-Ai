@@ -7,6 +7,7 @@ import IssueCategoryChart from "@/components/charts/IssueCategoryChart";
 import ReviewVelocityChart from "@/components/charts/ReviewVelocityChart";
 import { PixelLoaderBlock } from "@/components/ui/PixelLoader";
 import InstallGate from "@/components/InstallGate";
+import ReviewHistory from "@/components/ReviewHistory";
 
 interface TrendsData {
   scoreTrend: Array<{ date: string; avgScore: number; count: number }>;
@@ -73,34 +74,30 @@ function TrendsDashboard() {
   }
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-8 flex flex-col gap-8">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-lg shrink-0">
-              📊
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Review Trends</h1>
-              <p className="text-xs text-zinc-400">Quality metrics and patterns over time</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {(["7d", "30d", "90d"] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => changeRange(range)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  timeRange === range
-                    ? "bg-zinc-800 text-white border-zinc-700"
-                    : "bg-transparent text-zinc-500 hover:text-zinc-300"
-                }`}
-              >
-                {range}
-              </button>
-            ))}
-          </div>
+    <div className="w-full max-w-5xl mx-auto px-4 md:px-6 pt-4 pb-10 flex flex-col gap-5">
+      <div>
+        <h1 className="text-lg font-semibold text-cg-text">Reports</h1>
+        <p className="text-sm text-cg-subtle">All your pull request reviews, plus quality trends over time.</p>
+      </div>
+
+      {/* Every past review — click one for the full report. */}
+      <ReviewHistory />
+
+      {/* Trends */}
+      {/* <div className="flex items-center justify-between pt-4">
+        <h2 className="text-sm font-medium text-cg-text">Trends</h2>
+        <div className="flex items-center gap-1">
+          {(["7d", "30d", "90d"] as const).map((range) => (
+            <button
+              key={range}
+              onClick={() => changeRange(range)}
+              className={`h-7 px-2.5 rounded text-xs transition ${
+                timeRange === range ? "bg-cg-raised text-cg-text" : "text-cg-subtle hover:text-cg-text"
+              }`}
+            >
+              {range}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -114,16 +111,11 @@ function TrendsDashboard() {
         <PixelLoaderBlock className="min-h-[50vh]" />
       ) : data ? (
         <>
-          {/* Score Trend + Velocity */}
           <div className="grid gap-6 md:grid-cols-2">
             <ScoreTrendChart data={data.scoreTrend} />
             <ReviewVelocityChart data={data.velocity} />
           </div>
-
-          {/* Category Breakdown */}
           <IssueCategoryChart data={data.categoryBreakdown} />
-
-          {/* Top Issues */}
           {data.topIssues.length > 0 && (
             <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
               <h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-4">
@@ -146,8 +138,6 @@ function TrendsDashboard() {
               </div>
             </div>
           )}
-
-          {/* Summary Stats */}
           <div className="grid gap-4 md:grid-cols-4">
             <StatCard
               label="Avg Score (30d)"
@@ -178,8 +168,6 @@ function TrendsDashboard() {
               color="violet"
             />
           </div>
-
-          {/* LLM usage — tokens and latency per review */}
           {data.usage && (
             <div className="grid gap-4 md:grid-cols-3">
               <StatCard label="Tokens used" value={data.usage.totalTokens.toLocaleString()} icon="🧮" color="cyan" />
@@ -193,7 +181,7 @@ function TrendsDashboard() {
             </div>
           )}
         </>
-      ) : null}
+      ) : null} */}
     </div>
   );
 }

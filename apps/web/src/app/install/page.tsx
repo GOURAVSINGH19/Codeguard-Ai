@@ -21,6 +21,7 @@ import {
 import PixelLoader, { PixelLoaderBlock } from "@/components/ui/PixelLoader";
 import { InstallPrompt } from "@/components/InstallGate";
 import { INSTALL_URL } from "@/components/InstallButton";
+import { getInstallations, invalidateInstallations, type InstallationRow } from "@/lib/installations";
 import { PageSkeleton, Skeleton } from "@/components/ui/PixelSkeleton";
 
 const INSTALL_ERRORS: Record<string, string> = {
@@ -34,17 +35,7 @@ const INSTALL_ERRORS: Record<string, string> = {
 
 const REPO_PAGE_SIZE = 20;
 
-interface Installation {
-  id: string;
-  installationId: number;
-  accountLogin: string;
-  accountType: string;
-  accountAvatarUrl: string | null;
-  status: "active" | "suspended" | "deleted";
-  permissions: Record<string, string>;
-  events: string[];
-  createdAt: string;
-}
+type Installation = InstallationRow;
 
 /** A repository the GitHub App was granted access to. */
 interface Repository {
@@ -102,13 +93,9 @@ function InstallPageContent() {
   useEffect(() => {
     if (!isSignedIn) return;
     let cancelled = false;
-    fetch("/api/github/app/installations", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { installations: [] }))
-      .then((json) => {
-        if (!cancelled) setInstallations(json.installations ?? []);
-      })
-      .catch((err) => {
-        if (!cancelled) setNotice({ kind: "error", text: errorMessage(err) });
+    getInstallations()
+      .then((rows) => {
+        if (!cancelled) setInstallations(rows);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -130,6 +117,7 @@ function InstallPageContent() {
   }, [notice]);
 
   const reload = () => {
+    invalidateInstallations();
     setLoading(true);
     setReloadKey((k) => k + 1);
   };
