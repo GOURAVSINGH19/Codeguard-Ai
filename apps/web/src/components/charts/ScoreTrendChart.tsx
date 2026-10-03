@@ -47,18 +47,18 @@ export default function ScoreTrendChart({ data, height = 280 }: ScoreTrendChartP
       <div className="h-[240px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={formattedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--cg-chart-grid)" vertical={false} />
             <XAxis
               dataKey="date"
-              stroke="#71717a"
+              stroke="var(--cg-chart-axis)"
               fontSize={10}
               tickLine={false}
-              axisLine={{ stroke: "#27272a" }}
+              axisLine={{ stroke: "var(--cg-chart-grid)" }}
             />
             <YAxis
               yAxisId="left"
               domain={[0, 10]}
-              stroke="#71717a"
+              stroke="var(--cg-chart-axis)"
               fontSize={10}
               tickLine={false}
               axisLine={false}
@@ -68,18 +68,18 @@ export default function ScoreTrendChart({ data, height = 280 }: ScoreTrendChartP
               yAxisId="right"
               orientation="right"
               allowDecimals={false}
-              stroke="#71717a"
+              stroke="var(--cg-chart-axis)"
               fontSize={10}
               tickLine={false}
               axisLine={false}
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: "#18181b",
-                border: "1px solid #27272a",
+                backgroundColor: "var(--cg-panel)",
+                border: "1px solid var(--cg-border)",
                 borderRadius: "8px",
               }}
-              labelStyle={{ color: "#fafafa" }}
+              labelStyle={{ color: "var(--cg-text)" }}
               formatter={(value: number, name: string) =>
                 name === "Review Count" ? [value, name] : [`${value.toFixed(1)}/10`, name]
               }

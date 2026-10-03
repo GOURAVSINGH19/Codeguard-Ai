@@ -4,6 +4,7 @@ import { Geist, Geist_Mono, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import AppShell from "@/components/AppShell";
+import { THEME_INIT_SCRIPT } from "@/lib/theme-script";
 
 const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
@@ -26,17 +27,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
+      // The init script sets the theme class before React hydrates.
+      suppressHydrationWarning
       className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-mono", jetbrainsMono.variable)}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="min-h-full flex flex-col">
         <ClerkProvider
           appearance={{
             elements: {
-              card: "bg-zinc-900 border border-zinc-800 text-white shadow-2xl rounded-2xl p-6",
-              headerTitle: "text-white text-xl font-bold text-center",
-              headerSubtitle: "text-zinc-400 text-xs text-center mb-2",
-              socialButtonsBlockButton: "bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700 transition py-3 rounded-xl flex items-center justify-center gap-2",
-              socialButtonsBlockButtonText: "text-white font-medium text-sm",
+              card: "bg-cg-panel border border-cg-border text-cg-text shadow-2xl rounded-2xl p-6",
+              headerTitle: "text-cg-text text-xl font-bold text-center",
+              headerSubtitle: "text-cg-muted text-xs text-center mb-2",
+              socialButtonsBlockButton: "bg-cg-raised border-cg-border text-cg-text hover:bg-cg-border transition py-3 rounded-xl flex items-center justify-center gap-2",
+              socialButtonsBlockButtonText: "text-cg-text font-medium text-sm",
               socialButtonsProviderIcon: "w-5 h-5",
               socialButtonsBlockButton__google: "!hidden",
               socialButtonsIconButton__github: "visible",

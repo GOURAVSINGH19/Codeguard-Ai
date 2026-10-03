@@ -111,7 +111,7 @@ export default function RepoDrawer({ open, onClose }: { open: boolean; onClose: 
     <div className={`fixed inset-0 z-40 ${open ? "" : "pointer-events-none"}`} aria-hidden={!open}>
       <div
         onClick={onClose}
-        className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}
+        className={`absolute inset-0 bg-[var(--cg-overlay)] transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}
       />
       <aside
         role="dialog"

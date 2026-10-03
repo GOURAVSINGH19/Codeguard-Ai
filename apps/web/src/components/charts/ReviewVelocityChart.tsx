@@ -48,24 +48,24 @@ export default function ReviewVelocityChart({ data, height = 280 }: ReviewVeloci
             layout="vertical"
             margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
-            <XAxis type="number" stroke="#71717a" fontSize={10} tickLine={false} axisLine={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--cg-chart-grid)" horizontal={false} />
+            <XAxis type="number" stroke="var(--cg-chart-axis)" fontSize={10} tickLine={false} axisLine={false} />
             <YAxis
               type="category"
               dataKey="week"
               width={60}
-              stroke="#71717a"
+              stroke="var(--cg-chart-axis)"
               fontSize={10}
               tickLine={false}
               axisLine={false}
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: "#18181b",
-                border: "1px solid #27272a",
+                backgroundColor: "var(--cg-panel)",
+                border: "1px solid var(--cg-border)",
                 borderRadius: "8px",
               }}
-              labelStyle={{ color: "#fafafa" }}
+              labelStyle={{ color: "var(--cg-text)" }}
               formatter={(value: number) => [`${value}`, "Reviews"]}
             />
             <Bar

@@ -130,16 +130,73 @@
 }
 
 
-/* ── App chrome (CodeRabbit-style dark palette) ─────────────────────────── */
+/* ── App chrome (CodeRabbit-style palette; light by default, `.dark` on <html>) ── */
 @theme inline {
-  --color-cg-bg: oklch(0.185 0.008 285);
-  --color-cg-panel: oklch(0.213 0.0098 305);
-  --color-cg-raised: oklch(0.245 0.011 305);
-  --color-cg-border: oklch(0.312 0.014 305);
-  --color-cg-text: oklch(0.949 0.0035 305);
-  --color-cg-muted: oklch(0.767 0.0105 305);
-  --color-cg-subtle: oklch(0.6 0.012 305);
-  --color-cg-accent: rgb(255 160 87);
+  --color-cg-bg: var(--cg-bg);
+  --color-cg-panel: var(--cg-panel);
+  --color-cg-raised: var(--cg-raised);
+  --color-cg-border: var(--cg-border);
+  --color-cg-text: var(--cg-text);
+  --color-cg-muted: var(--cg-muted);
+  --color-cg-subtle: var(--cg-subtle);
+  --color-cg-accent: var(--cg-accent);
+}
+
+:root {
+  --cg-bg: oklch(0.972 0.003 305);
+  --cg-panel: oklch(1 0 0);
+  --cg-raised: oklch(0.94 0.005 305);
+  --cg-border: oklch(0.895 0.007 305);
+  --cg-text: oklch(0.22 0.01 305);
+  --cg-muted: oklch(0.43 0.012 305);
+  --cg-subtle: oklch(0.56 0.012 305);
+  --cg-accent: oklch(0.63 0.17 50);
+  --cg-skel-bg: oklch(0.93 0.006 305 / 0.9);
+  --cg-skel-dot: rgb(0 0 0 / 0.07);
+  --cg-overlay: rgb(20 18 24 / 0.35);
+  /* Chart chrome */
+  --cg-chart-grid: oklch(0.9 0.006 305);
+  --cg-chart-axis: oklch(0.56 0.012 305);
+  --cg-chart-cursor: oklch(0.85 0.008 305);
+}
+
+.dark {
+  --cg-bg: oklch(0.185 0.008 285);
+  --cg-panel: oklch(0.213 0.0098 305);
+  --cg-raised: oklch(0.245 0.011 305);
+  --cg-border: oklch(0.312 0.014 305);
+  --cg-text: oklch(0.949 0.0035 305);
+  --cg-muted: oklch(0.767 0.0105 305);
+  --cg-subtle: oklch(0.6 0.012 305);
+  --cg-accent: rgb(255 160 87);
+  --cg-skel-bg: oklch(0.245 0.011 305 / 0.85);
+  --cg-skel-dot: rgb(255 255 255 / 0.07);
+  --cg-overlay: rgb(0 0 0 / 0.5);
+  --cg-chart-grid: #27272a;
+  --cg-chart-axis: #71717a;
+  --cg-chart-cursor: #3f3f46;
+}
+
+/*
+ * Status colours (rose/emerald/amber/…) were tuned as light-on-dark text.
+ * On white the pale shades wash out, so deepen them in light mode only.
+ */
+html:not(.dark) {
+  --color-rose-200: oklch(45.5% 0.188 13.697); /* rose-800 */
+  --color-rose-300: oklch(51.4% 0.222 16.935); /* rose-700 */
+  --color-rose-400: oklch(58.6% 0.253 17.585); /* rose-600 */
+  --color-emerald-200: oklch(43.2% 0.095 166.913); /* emerald-800 */
+  --color-emerald-300: oklch(50.8% 0.118 165.612); /* emerald-700 */
+  --color-emerald-400: oklch(59.6% 0.145 163.225); /* emerald-600 */
+  --color-amber-200: oklch(47.3% 0.137 46.201); /* amber-800 */
+  --color-amber-300: oklch(55.5% 0.163 48.998); /* amber-700 */
+  --color-amber-400: oklch(55.5% 0.163 48.998); /* amber-700 */
+  --color-orange-300: oklch(55.3% 0.195 38.402); /* orange-700 */
+  --color-orange-400: oklch(64.6% 0.222 41.116); /* orange-600 */
+  --color-sky-300: oklch(50% 0.134 242.749); /* sky-700 */
+  --color-sky-400: oklch(58.8% 0.158 241.966); /* sky-600 */
+  --color-cyan-400: oklch(60.9% 0.126 221.723); /* cyan-600 */
+  --color-violet-400: oklch(54.1% 0.281 293.009); /* violet-600 */
 }
 
 /* Pixel loader: a 3×3 grid of cells pulsing out of phase. */
@@ -177,7 +234,7 @@
   position: relative;
   overflow: hidden;
   border-radius: 3px;
-  background-color: oklch(0.245 0.011 305 / 0.85);
+  background-color: var(--cg-skel-bg);
 }
 /* Two dot layers at offset phases → the grid twinkles instead of pulsing in unison. */
 .cg-skel::before,
@@ -185,7 +242,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background-image: conic-gradient(at 2px 2px, transparent 75%, rgb(255 255 255 / 0.07) 0);
+  background-image: conic-gradient(at 2px 2px, transparent 75%, var(--cg-skel-dot) 0);
   background-size: 4px 4px;
   animation: cg-skel-flicker 1.6s steps(4) infinite;
 }

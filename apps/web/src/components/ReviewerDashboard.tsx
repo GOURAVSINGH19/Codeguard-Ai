@@ -211,13 +211,13 @@ export default function ReviewerDashboard() {
               <AreaChart data={stats.series} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
                 <defs>
                   <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#ffa057" stopOpacity={0.22} />
-                    <stop offset="100%" stopColor="#ffa057" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--cg-accent)" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="var(--cg-accent)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis
                   dataKey="day"
-                  stroke="#71717a"
+                  stroke="var(--cg-chart-axis)"
                   fontSize={11}
                   tickLine={false}
                   axisLine={false}
@@ -225,13 +225,13 @@ export default function ReviewerDashboard() {
                   minTickGap={40}
                 />
                 <Tooltip
-                  cursor={{ stroke: "#3f3f46" }}
-                  contentStyle={{ background: "#232127", border: "1px solid #38353d", borderRadius: 6, fontSize: 12 }}
-                  labelStyle={{ color: "#a1a1aa" }}
-                  itemStyle={{ color: "#fafafa" }}
+                  cursor={{ stroke: "var(--cg-chart-cursor)" }}
+                  contentStyle={{ background: "var(--cg-panel)", border: "1px solid var(--cg-border)", borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: "var(--cg-muted)" }}
+                  itemStyle={{ color: "var(--cg-text)" }}
                   formatter={(v: number) => [v, "Reviews"]}
                 />
-                <Area type="monotone" dataKey="reviews" stroke="#ffa057" strokeWidth={1.75} fill="url(#activityFill)" />
+                <Area type="monotone" dataKey="reviews" stroke="var(--cg-accent)" strokeWidth={1.75} fill="url(#activityFill)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

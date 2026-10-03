@@ -21,6 +21,7 @@ import {
 import CommandPalette from "./CommandPalette";
 import AccountMenu from "./AccountMenu";
 import RepoDrawer from "./RepoDrawer";
+import ThemeSwitcher from "./ThemeSwitcher";
 import { APP_INSTALLED_EVENT, NEW_REVIEW_EVENT } from "@/lib/events";
 import { getInstallations, hasActive } from "@/lib/installations";
 
@@ -345,6 +346,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </>
           )}
           <div className="my-2 border-t border-cg-border" />
+
+          <ThemeSwitcher collapsed={collapsed} />
 
           <Show when="signed-in">
             <div className="mt-1">

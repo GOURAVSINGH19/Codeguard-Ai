@@ -7,6 +7,7 @@ import { PixelLoaderBlock } from "./ui/PixelLoader";
 import FlickeringGrid from "./ui/FlickeringGrid";
 import InstallButton from "./InstallButton";
 import { getInstallations, hasActive } from "@/lib/installations";
+import { useResolvedTheme } from "@/lib/theme";
 
 /**
  * Like CodeRabbit: nothing but the install prompt until the user has an
@@ -49,10 +50,11 @@ export function InstallPrompt({
     "Choose the repositories you'd like reviewed.",
     "Track review metrics and pull request history right here.",
   ];
+  const theme = useResolvedTheme();
   return (
     <div className="w-full max-w-5xl mx-auto px-4 md:px-6 py-12">
       <div className="relative overflow-hidden rounded-md border border-cg-border bg-cg-bg/40 px-6 py-14 flex flex-col items-center text-center gap-6 [&>*:not(canvas)]:relative">
-        <FlickeringGrid />
+        <FlickeringGrid color={theme === "dark" ? "255, 255, 255" : "0, 0, 0"} />
         <div className="flex items-center gap-3">
           <span className="h-10 w-10 rounded-full bg-cg-text text-cg-bg flex items-center justify-center">
             <ShieldCheck size={22} weight="fill" />

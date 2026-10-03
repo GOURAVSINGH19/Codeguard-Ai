@@ -66,8 +66,8 @@ function TrendsDashboard() {
     return (
       <div className="w-full max-w-6xl mx-auto px-4 py-8 flex flex-col gap-8">
         <div className="text-center py-12">
-          <h1 className="text-2xl font-bold text-white mb-4">Review Trends Dashboard</h1>
-          <p className="text-zinc-400 mb-6">Sign in to view your code review analytics</p>
+          <h1 className="text-2xl font-bold text-cg-text mb-4">Review Trends Dashboard</h1>
+          <p className="text-cg-muted mb-6">Sign in to view your code review analytics</p>
         </div>
       </div>
     );
@@ -117,18 +117,18 @@ function TrendsDashboard() {
           </div>
           <IssueCategoryChart data={data.categoryBreakdown} />
           {data.topIssues.length > 0 && (
-            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
-              <h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+            <div className="bg-cg-bg border border-cg-border rounded-2xl p-4">
+              <h4 className="text-[10px] font-semibold text-cg-muted uppercase tracking-wider mb-4">
                 Top Recurring Issues
               </h4>
               <div className="space-y-3">
                 {data.topIssues.slice(0, 5).map((issue, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg p-3"
+                    className="flex items-center justify-between bg-cg-raised border border-cg-border rounded-lg p-3"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-zinc-300 truncate">{issue.message}</p>
+                      <p className="text-xs text-cg-text truncate">{issue.message}</p>
                     </div>
                     <span className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold shrink-0 ml-3">
                       {issue.count}x
@@ -205,12 +205,12 @@ function StatCard({
   };
 
   return (
-    <div className={`bg-zinc-950 border rounded-xl p-4 ${colorMap[color]}`}>
+    <div className={`bg-cg-bg border rounded-xl p-4 ${colorMap[color]}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xl">{icon}</span>
-        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
+        <p className="text-[10px] font-semibold text-cg-subtle uppercase tracking-wider">{label}</p>
       </div>
-      <p className="text-2xl font-bold text-white">{value}</p>
+      <p className="text-2xl font-bold text-cg-text">{value}</p>
     </div>
   );
 }
