@@ -105,6 +105,10 @@ export interface SummaryOptions {
   inlineCount: number;
   notes?: string[];
   footer?: string;
+  /** Markdown sections placed between the summary and the findings (scorecard, policy…). */
+  sections?: string[];
+  /** Replaces the default "Quality score · Issues" line. */
+  headline?: string;
 }
 
 export function formatReviewBody(opts: SummaryOptions): string {
@@ -122,11 +126,11 @@ export function formatReviewBody(opts: SummaryOptions): string {
 
   return neutralizeMentions(`## 🛡️ CodeGuard AI Review
 
-**Quality score:** \`${opts.score.toFixed(1)} / 10\` · **Issues:** ${total}
+${opts.headline ?? `**Quality score:** \`${opts.score.toFixed(1)} / 10\` · **Issues:** ${total}`}
 
 ### Summary
 ${opts.summary}
-${inlineLine}
+${inlineLine}${opts.sections?.length ? `\n${opts.sections.join("\n\n")}\n` : ""}
 ${listed ? `---\n\n### Other findings\n${listed}\n` : total === 0 ? "🎉 No issues found.\n" : ""}${notes}
 ---
 *${opts.footer ?? "Powered by CodeGuard AI"}*`);
@@ -144,6 +148,8 @@ export interface PostReviewInput {
   commentable: Map<string, Set<number>>;
   notes?: string[];
   footer?: string;
+  sections?: string[];
+  headline?: string;
 }
 
 export interface PostReviewResult {
@@ -211,6 +217,9 @@ export interface CheckRunInput {
   score: number;
   issues: ReviewIssue[];
   failOn: string;
+  /** Replace the generated title / summary (assurance pipeline). */
+  title?: string;
+  summary?: string;
 }
 
 /** Create a completed "CodeGuard AI" Check Run so teams can gate merges on it. */
@@ -233,8 +242,8 @@ export async function createCheckRun(client: ChecksClientLike, input: CheckRunIn
     status: "completed",
     conclusion: input.conclusion,
     output: {
-      title,
-      summary: `Score **${input.score.toFixed(1)}/10** — ${counts}. See the review on the pull request for details.`,
+      title: (input.title ?? title).slice(0, 255),
+      summary: input.summary?.slice(0, 65_000) ?? `Score **${input.score.toFixed(1)}/10** — ${counts}. See the review on the pull request for details.`,
     },
   });
 }

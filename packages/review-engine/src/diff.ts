@@ -1,11 +1,4 @@
-/**
- * Diff utilities.
- *
- * GitHub's `patch` strings contain hunk headers (`@@ -a,b +c,d @@`) but no
- * per-line numbers, so an LLM has to guess line numbers — which is why reviews
- * used to point at the wrong lines. We annotate every line with its NEW-file
- * line number and remember which lines GitHub will accept inline comments on.
- */
+
 
 export interface PRFileInput {
   filename: string;
@@ -16,9 +9,7 @@ export interface PRFileInput {
 }
 
 export interface AnnotatedPatch {
-  /** Patch text with right-side line numbers in a left gutter. */
   text: string;
-  /** New-file line numbers that appear in the diff (added or context lines). */
   commentableLines: Set<number>;
 }
 
@@ -59,6 +50,35 @@ export function annotatePatch(patch: string): AnnotatedPatch {
   }
 
   return { text: out.join("\n"), commentableLines };
+}
+
+/** Lines added by a patch, with their NEW-file line numbers. */
+export function addedLines(patch: string | null | undefined): Array<{ line: number; text: string }> {
+  if (!patch) return [];
+  const out: Array<{ line: number; text: string }> = [];
+  let newLine = 0;
+  let inHunk = false;
+  for (const raw of patch.split("\n")) {
+    const header = HUNK_HEADER.exec(raw);
+    if (header) {
+      newLine = Number(header[1]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk || raw.startsWith("\\")) continue;
+    if (raw[0] === "+") {
+      out.push({ line: newLine, text: raw.slice(1) });
+      newLine++;
+    } else if (raw[0] !== "-") {
+      newLine++;
+    }
+  }
+  return out;
+}
+
+/** Changed line ranges (NEW-file numbering) per hunk, for symbol overlap checks. */
+export function changedLineSet(patch: string | null | undefined): Set<number> {
+  return new Set(addedLines(patch).map((l) => l.line));
 }
 
 export interface DiffContextOptions {

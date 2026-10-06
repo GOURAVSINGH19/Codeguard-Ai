@@ -45,6 +45,8 @@ export const reviews = pgTable("reviews", {
     .where(sql`${table.headSha} IS NOT NULL AND ${table.status} <> 'failed'`),
   // Rate limiting and "my reviews" lookups.
   index("reviews_user_created_idx").on(table.userId, table.createdAt),
+  // Stale-review recovery sweeps rows stuck in pending / in_progress.
+  index("reviews_status_updated_idx").on(table.status, table.updatedAt),
 ]);
 
 export type Review = typeof reviews.$inferSelect;

@@ -31,6 +31,12 @@ export interface ReviewIssueItem {
   line: number | null;
   message: string;
   suggestion: string | null;
+  /** open | resolved | dismissed */
+  status?: string;
+  /** Pipeline stage that reported it (quality, security, testing, align…). */
+  source?: string | null;
+  confidence?: number | null;
+  ruleId?: string | null;
 }
 
 /** Dashboard buckets: completed reviews scoring below 5 need attention. */
@@ -106,7 +112,28 @@ export interface ReviewDetail extends ReviewListItem {
   } | null;
   /** Safe subset of metadata for the UI (never raw errors). */
   details: { tokens: number | null; durationMs: number | null; githubUrl: string | null } | null;
+  /** Staged-pipeline results (null for snippet and legacy reviews). */
+  assurance: ReviewAssurance | null;
+  /** Pipeline node currently running, while the review is in progress. */
+  progress: string | null;
+  error: string | null;
 }
+
+export interface ReviewAssurance {
+  decision: { verdict: string; conclusion: string; headline: string; reasons: string[] } | null;
+  scorecard: { overall: number; dimensions: Array<{ id: string; label: string; score: number | null; note: string }> } | null;
+  policies: Array<{ id: string; status: string; message: string }>;
+  risk: { score: number; level: string; factors: string[] } | null;
+  intent: { summary: string; changeType: string; stated: boolean } | null;
+  alignment: { alignment: string; score: number; summary: string } | null;
+  recommendations: string[];
+  skills: string[];
+  verification: { status: string; confirmed: number; uncertain: number; rejected: unknown[] } | null;
+  trace: Array<{ name: string; status: string; durationMs: number; error?: string }>;
+}
+
+export const FINDING_STATUSES = ["open", "resolved", "dismissed"] as const;
+export type FindingStatus = (typeof FINDING_STATUSES)[number];
 
 /** Placeholder file path for snippet reviews / PR issues without a file. */
 const SNIPPET_PATH = "snippet";
@@ -203,7 +230,22 @@ export class ReviewPersistenceService {
    * already exists, so a double click or a refresh doesn't pay for a second
    * LLM call. `created` tells the caller whether to start the work.
    */
-  async claimPRReview(userId: string, pullRequestId: string, pr: GitHubPRDetail) {
+  /** The caller's live (non-failed) review of this commit, if any. */
+  async findActivePRReview(userId: string, pullRequestId: string, headSha: string) {
+    const [existing] = await db
+      .select({ id: reviews.id, status: reviews.status, createdAt: reviews.createdAt })
+      .from(reviews)
+      .where(and(eq(reviews.pullRequestId, pullRequestId), eq(reviews.headSha, headSha), eq(reviews.userId, userId), inArray(reviews.status, ["pending", "in_progress", "completed"])))
+      .orderBy(desc(reviews.createdAt))
+      .limit(1);
+    return existing ?? null;
+  }
+
+  /**
+   * Create the pending review for (PR, head SHA, user). Returns null when a
+   * concurrent request created it first (the unique index decides).
+   */
+  async createPendingPRReview(userId: string, pullRequestId: string, pr: GitHubPRDetail) {
     const [created] = await db
       .insert(reviews)
       .values({
@@ -219,16 +261,7 @@ export class ReviewPersistenceService {
       })
       .onConflictDoNothing()
       .returning({ id: reviews.id, status: reviews.status, createdAt: reviews.createdAt });
-
-    if (created) return { review: created, created: true as const };
-
-    const [existing] = await db
-      .select({ id: reviews.id, status: reviews.status, createdAt: reviews.createdAt })
-      .from(reviews)
-      .where(and(eq(reviews.pullRequestId, pullRequestId), eq(reviews.headSha, pr.headSha), eq(reviews.userId, userId), inArray(reviews.status, ["pending", "in_progress", "completed"])))
-      .orderBy(desc(reviews.createdAt))
-      .limit(1);
-    return { review: existing, created: false as const };
+    return created ?? null;
   }
 
   // ─── Completion ──────────────────────────────────────────────────────────
@@ -280,7 +313,8 @@ export class ReviewPersistenceService {
     const [row] = await db
       .select({ n: count() })
       .from(reviews)
-      .where(and(eq(reviews.userId, userId), gte(reviews.createdAt, since)));
+      // Failed attempts (including rejected ones) never count against the limit.
+      .where(and(eq(reviews.userId, userId), gte(reviews.createdAt, since), inArray(reviews.status, ["pending", "in_progress", "completed"])));
     return Number(row?.n ?? 0);
   }
 
@@ -367,7 +401,7 @@ export class ReviewPersistenceService {
 
     const r = row.review;
     const comments = await db.select().from(reviewComments).where(eq(reviewComments.reviewId, r.id));
-    const meta = (r.metadata ?? {}) as { usage?: { totalTokens?: number }; durationMs?: number; github?: { url?: string } };
+    const meta = (r.metadata ?? {}) as StoredMetadata;
 
     return {
       id: r.id,
@@ -406,7 +440,42 @@ export class ReviewPersistenceService {
         durationMs: meta.durationMs ?? null,
         githubUrl: meta.github?.url ?? null,
       },
+      assurance: toAssurance(meta),
+      progress: r.status === "pending" || r.status === "in_progress" ? (meta.progress?.node ?? null) : null,
+      // `error` may hold upstream error text — only the curated userMessage reaches the browser.
+      error: r.status === "failed" ? String(meta.userMessage ?? "The review failed. Please try again.").slice(0, 300) : null,
     };
+  }
+
+  /** Status + current pipeline node, for the SSE progress stream. */
+  async getReviewStatus(reviewId: string, userId: string): Promise<{ status: string; progress: string | null; score: number | null } | null> {
+    const [row] = await db
+      .select({ status: reviews.status, score: reviews.score, metadata: reviews.metadata })
+      .from(reviews)
+      .where(and(eq(reviews.id, reviewId), visibleTo(userId)))
+      .limit(1);
+    if (!row) return null;
+    const meta = (row.metadata ?? {}) as { progress?: { node?: string } };
+    return { status: row.status, progress: meta.progress?.node ?? null, score: row.score };
+  }
+
+  /** Resolve / dismiss / reopen a finding on a review the caller can see. */
+  async updateFindingStatus(input: { reviewId: string; findingId: string; userId: string; status: FindingStatus; note?: string }): Promise<ReviewIssueItem | null> {
+    const [visible] = await db.select({ id: reviews.id }).from(reviews).where(and(eq(reviews.id, input.reviewId), visibleTo(input.userId))).limit(1);
+    if (!visible) return null;
+    const open = input.status === "open";
+    const [row] = await db
+      .update(reviewComments)
+      .set({
+        status: input.status,
+        resolvedAt: open ? null : new Date(),
+        resolvedBy: open ? null : input.userId,
+        resolutionNote: open ? null : (input.note?.slice(0, 500) ?? null),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(reviewComments.id, input.findingId), eq(reviewComments.reviewId, input.reviewId)))
+      .returning();
+    return row ? toIssueItem(row) : null;
   }
 
   // ─── Private ─────────────────────────────────────────────────────────────
@@ -442,5 +511,46 @@ function toIssueItem(c: typeof reviewComments.$inferSelect): ReviewIssueItem {
     line: c.lineNumber ?? null,
     message: c.body || c.comment || "",
     suggestion: c.suggestion ?? null,
+    status: c.status,
+    source: c.source ?? null,
+    confidence: c.confidence ?? null,
+    ruleId: c.ruleId ?? null,
+  };
+}
+
+/** Shape of `reviews.metadata` as written by the workers' pipeline (all optional: older rows lack most of it). */
+interface StoredMetadata {
+  pipelineVersion?: number;
+  usage?: { totalTokens?: number };
+  durationMs?: number;
+  github?: { url?: string };
+  progress?: { node?: string };
+  userMessage?: string;
+  decision?: ReviewAssurance["decision"];
+  scorecard?: ReviewAssurance["scorecard"];
+  policies?: ReviewAssurance["policies"];
+  risk?: { score: number; level: string; factors?: string[] };
+  intent?: { summary: string; changeType: string; stated: boolean };
+  alignment?: { alignment: string; score: number; summary: string };
+  recommendations?: string[];
+  skills?: string[];
+  verification?: ReviewAssurance["verification"];
+  trace?: Array<{ name: string; status: string; durationMs: number }>;
+}
+
+function toAssurance(meta: StoredMetadata): ReviewAssurance | null {
+  if (meta.pipelineVersion !== 2) return null;
+  return {
+    decision: meta.decision ?? null,
+    scorecard: meta.scorecard ?? null,
+    policies: Array.isArray(meta.policies) ? meta.policies : [],
+    risk: meta.risk ? { score: meta.risk.score, level: meta.risk.level, factors: meta.risk.factors ?? [] } : null,
+    intent: meta.intent ? { summary: meta.intent.summary, changeType: meta.intent.changeType, stated: meta.intent.stated } : null,
+    alignment: meta.alignment ? { alignment: meta.alignment.alignment, score: meta.alignment.score, summary: meta.alignment.summary } : null,
+    recommendations: Array.isArray(meta.recommendations) ? meta.recommendations : [],
+    skills: Array.isArray(meta.skills) ? meta.skills : [],
+    verification: meta.verification ?? null,
+    // Stage errors stay server-side; the UI only learns that a stage failed.
+    trace: Array.isArray(meta.trace) ? meta.trace.map((t) => ({ name: t.name, status: t.status, durationMs: t.durationMs, error: t.status === "failed" ? "stage failed" : undefined })) : [],
   };
 }

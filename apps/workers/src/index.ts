@@ -6,6 +6,7 @@ import { startReviewProcessor } from "./jobs/reviewProcessor.js";
 import { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
 import { startFullIndexer } from "./jobs/fullIndexer.js";
 import { startWebhookOutboxSweeper, stopWebhookOutboxSweeper } from "./jobs/webhookOutboxSweeper.js";
+import { startReviewRecoverySweeper, stopReviewRecoverySweeper } from "./jobs/reviewRecoverySweeper.js";
 import { disconnectProducer } from "./queue/kafkaClient.js";
 import { disconnectConsumers } from "./queue/consumer.js";
 import { logger } from "./lib/logger.js";
@@ -25,6 +26,7 @@ async function main() {
 
   await ensureTopicsExist();
   startWebhookOutboxSweeper();
+  startReviewRecoverySweeper();
 
   await Promise.all(
     [
@@ -52,6 +54,7 @@ async function shutdown(signal: string) {
   logger.info("shutting down", { signal });
   try {
     stopWebhookOutboxSweeper();
+    stopReviewRecoverySweeper();
     await disconnectConsumers();
     await disconnectProducer();
   } catch (err) {

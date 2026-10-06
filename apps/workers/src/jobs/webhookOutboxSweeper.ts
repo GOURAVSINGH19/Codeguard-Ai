@@ -1,5 +1,5 @@
-import { db, webhookEvents, eq, and, or, lt, gt, isNotNull } from "@codeguard/db";
-import { TOPICS } from "@codeguard/kafka";
+import { db, webhookEvents, eq, and, or, lt, gt, asc, isNotNull } from "@codeguard/db";
+import { TOPICS, prMessageKey } from "@codeguard/kafka";
 import type { WebhookReceivedEvent } from "@codeguard/kafka";
 import { getWorkerProducer } from "../queue/kafkaClient.js";
 import { logger } from "../lib/logger.js";
@@ -10,21 +10,38 @@ import { logger } from "../lib/logger.js";
  * The web app stores every webhook delivery before publishing it. If the
  * publish failed (Kafka down, cold start timeout) the row stays in status
  * "received". We republish rows less than a day old that either carry the web
- * app's publish error (that attempt is over, so no race) or have been stuck for
- * over a minute (the web app died before recording the error). Duplicates are
- * harmless: reviews are claimed per (PR, head SHA) and indexing is idempotent.
+ * app's publish error (that attempt is over, so no race) or are older than
+ * OUTBOX_MIN_AGE_MS (the web app died before recording the error). Duplicates
+ * are harmless: reviews are claimed per (PR, head SHA) and indexing is idempotent.
  *
- * OUTBOX_SWEEP_INTERVAL_MS shortens the interval — local mode relies on the
- * sweeper for every event, so it sweeps every few seconds.
+ * When the web app cannot reach Kafka at all (KAFKA_PUBLISH_FROM_WEB=false,
+ * e.g. Kafka as a Render private service) every event arrives this way, so
+ * deployments set OUTBOX_SWEEP_INTERVAL_MS to a few seconds and
+ * OUTBOX_MIN_AGE_MS to 0.
  */
 const INTERVAL_MS = Number(process.env.OUTBOX_SWEEP_INTERVAL_MS) || 60_000;
+const MIN_AGE_MS = process.env.OUTBOX_MIN_AGE_MS !== undefined && process.env.OUTBOX_MIN_AGE_MS !== "" ? Number(process.env.OUTBOX_MIN_AGE_MS) : 60_000;
 const BATCH = 50;
 
 let timer: NodeJS.Timeout | null = null;
 
+/** Same keys the web app uses, so one PR's events stay ordered on one partition. */
+export function outboxKey(payload: unknown, githubEvent: string, deliveryId: string): string {
+  const p = payload as { repository?: { name?: string; owner?: { login?: string } }; pull_request?: { number?: number } } | null;
+  const owner = p?.repository?.owner?.login;
+  const repo = p?.repository?.name;
+  const number = p?.pull_request?.number;
+  if (githubEvent === "pull_request" && owner && repo && number) return prMessageKey(owner, repo, number);
+  if (owner && repo) return `${owner}/${repo}`.toLowerCase();
+  return deliveryId;
+}
+
 export function startWebhookOutboxSweeper(): void {
   const log = logger.child({ job: "webhookOutboxSweeper" });
+  let running = false;
   const tick = async () => {
+    if (running) return; // a slow sweep must not overlap the next one
+    running = true;
     try {
       const now = Date.now();
       const stuck = await db
@@ -33,10 +50,11 @@ export function startWebhookOutboxSweeper(): void {
         .where(
           and(
             eq(webhookEvents.status, "received"),
-            or(isNotNull(webhookEvents.error), lt(webhookEvents.createdAt, new Date(now - 60_000))),
+            or(isNotNull(webhookEvents.error), lt(webhookEvents.createdAt, new Date(now - MIN_AGE_MS))),
             gt(webhookEvents.createdAt, new Date(now - 24 * 60 * 60_000))
           )
         )
+        .orderBy(asc(webhookEvents.createdAt))
         .limit(BATCH);
       if (stuck.length === 0) return;
 
@@ -49,12 +67,15 @@ export function startWebhookOutboxSweeper(): void {
           payload: JSON.stringify(row.payload),
           receivedAt: row.createdAt.toISOString(),
         };
-        await producer.send({ topic: TOPICS.WEBHOOK_RECEIVED, messages: [{ key: row.githubDeliveryId, value: JSON.stringify(event) }] });
+        const key = outboxKey(row.payload, row.event, row.githubDeliveryId);
+        await producer.send({ topic: TOPICS.WEBHOOK_RECEIVED, messages: [{ key, value: JSON.stringify(event) }] });
         await db.update(webhookEvents).set({ status: "processing", error: null }).where(eq(webhookEvents.id, row.id));
       }
-      log.info("republished stuck webhook deliveries", { count: stuck.length });
+      log.info("published webhook deliveries from the outbox", { count: stuck.length });
     } catch (err) {
       log.warn("outbox sweep failed", { error: (err as Error).message });
+    } finally {
+      running = false;
     }
   };
   timer = setInterval(tick, INTERVAL_MS);

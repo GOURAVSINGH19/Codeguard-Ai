@@ -1,9 +1,4 @@
-/**
- * Canonical Kafka topic names for CodeGuard AI.
- *
- * ALL producers and consumers MUST import from here.
- * Never hard-code topic strings outside this file.
- */
+
 export const TOPICS = {
   /**
    * Published by: Next.js API route (POST /api/webhooks/github)
@@ -15,7 +10,8 @@ export const TOPICS = {
 
   /**
    * Published by: webhookProcessor (after filtering PR events)
-   *              Next.js API route (POST /api/github/review) for sync fallback
+   *              Next.js API route (POST /api/github/review) for dashboard requests
+   *              reviewRecoverySweeper (stale / unpublished reviews)
    * Consumed by:  reviewProcessor worker
    *
    * Payload: { owner, repo, pullNumber, userId, triggeredBy }

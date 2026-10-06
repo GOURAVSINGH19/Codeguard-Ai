@@ -18,18 +18,20 @@ const pr = {
 
 function makePersistence(opts: { recent?: number } = {}) {
   const claims = new Map<string, { id: string; status: string; createdAt: Date }>();
+  const key = (userId: string, prId: string, sha: string) => `${userId}:${prId}:${sha}`;
   return {
     countReviewsSince: vi.fn(async () => opts.recent ?? 0),
     ensureRepository: vi.fn(async () => ({ id: "repo" })),
     ensurePullRequest: vi.fn(async () => ({ id: "pr" })),
-    claimPRReview: vi.fn(async (userId: string, prId: string, p: { headSha: string }) => {
-      const key = `${userId}:${prId}:${p.headSha}`;
-      const existing = claims.get(key);
-      if (existing) return { review: existing, created: false as const };
+    findActivePRReview: vi.fn(async (userId: string, prId: string, headSha: string) => claims.get(key(userId, prId, headSha)) ?? null),
+    createPendingPRReview: vi.fn(async (userId: string, prId: string, p: { headSha: string }) => {
+      const k = key(userId, prId, p.headSha);
+      if (claims.has(k)) return null;
       const review = { id: `review-${claims.size + 1}`, status: "pending", createdAt: new Date() };
-      claims.set(key, review);
-      return { review, created: true as const };
+      claims.set(k, review);
+      return review;
     }),
+    mergeMetadata: vi.fn(async () => {}),
     completeReview: vi.fn(async () => {}),
     failReview: vi.fn(async () => {}),
     createPendingSnippetReview: vi.fn(async () => ({ id: "snippet-1", createdAt: new Date() })),
@@ -50,18 +52,40 @@ beforeEach(() => {
 });
 
 describe("ReviewService", () => {
-  it("reviews the same commit only once, even if requested twice", async () => {
+  it("queues the same commit only once, even if requested twice", async () => {
     const persistence = makePersistence();
-    const engine = makeEngine();
-    const service = new ReviewService(persistence as never, () => engine as never);
+    const publish = vi.fn(async () => {});
+    const service = new ReviewService(persistence as never, () => makeEngine() as never, publish);
 
     const first = await service.startPRReview("user_1", pr);
     const second = await service.startPRReview("user_1", pr);
-    await Promise.all(scheduled.map((fn) => fn()));
 
     expect(second).toMatchObject({ id: first.id, reused: true });
-    expect(engine.reviewPullRequest).toHaveBeenCalledTimes(1);
-    expect(persistence.completeReview).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "acme", repo: "api", pullNumber: 7, reviewId: first.id, triggeredBy: "manual", headSha: "abc1234", publishToGitHub: false })
+    );
+    expect(scheduled).toHaveLength(0); // PR reviews no longer run inside the web request
+  });
+
+  it("keeps the review queued when Kafka is down (the recovery sweeper publishes it)", async () => {
+    const persistence = makePersistence();
+    const publish = vi.fn(async () => {
+      throw new Error("broker unreachable");
+    });
+    const started = await new ReviewService(persistence as never, () => makeEngine() as never, publish).startPRReview("user_1", pr);
+    expect(started).toMatchObject({ status: "pending", reused: false });
+    expect(persistence.mergeMetadata).toHaveBeenCalledWith(started.id, expect.objectContaining({ queued: expect.any(String) }));
+  });
+
+  it("checks the rate limit before creating a PR review row", async () => {
+    const persistence = makePersistence({ recent: 5 });
+    const publish = vi.fn(async () => {});
+    const err = await new ReviewService(persistence as never, () => makeEngine() as never, publish).startPRReview("user_1", pr).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.status).toBe(429);
+    expect(persistence.createPendingPRReview).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it("returns 202-style pending state and finishes in the background", async () => {

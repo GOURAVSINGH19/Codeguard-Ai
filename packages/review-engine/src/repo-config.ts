@@ -15,14 +15,43 @@ import type { ReviewIssue } from "@codeguard/types";
  * fail_on: critical  # check run fails at/above this severity ("never" = neutral only)
  * instructions: |    # team conventions added to the prompt
  *   We use Result<T, E> instead of throwing.
+ * critical_paths:    # globs that raise the risk of a change
+ *   - "src/billing/**"
+ * skills:            # review checklists (auto-detected from the stack)
+ *   enable: [kafka-consumer]
+ *   disable: [react]
+ * policy:
+ *   max_changed_lines: 800   # larger PRs get a warning
+ *   require_tests: warn      # off | warn | block — source changes without tests
+ *   block_secrets: true      # a detected credential fails the check
+ *   min_score: 6             # overall score below this fails the check (null = off)
+ *   min_confidence: 0.5      # findings below this confidence are not posted
  * ```
  */
+export const PolicyConfigSchema = z.object({
+  max_changed_lines: z.number().int().positive().default(800),
+  require_tests: z.enum(["off", "warn", "block"]).default("warn"),
+  block_secrets: z.boolean().default(true),
+  min_score: z.number().min(0).max(10).nullable().default(null),
+  min_confidence: z.number().min(0).max(1).default(0.5),
+});
+
 export const RepoConfigSchema = z.object({
   ignore: z.array(z.string()).max(100).default([]),
   min_severity: z.enum(SEVERITIES).default("low"),
   fail_on: z.enum([...SEVERITIES, "never"] as const).default("critical"),
   instructions: z.string().max(4_000).optional(),
+  critical_paths: z.array(z.string()).max(100).default([]),
+  skills: z
+    .object({
+      enable: z.array(z.string()).max(50).default([]),
+      disable: z.array(z.string()).max(50).default([]),
+    })
+    .prefault({}),
+  policy: PolicyConfigSchema.prefault({}),
 });
+
+export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 

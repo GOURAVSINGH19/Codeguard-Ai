@@ -1,7 +1,8 @@
-import type { z } from "zod";
 import { ReviewOutputSchema } from "@codeguard/types";
 import type { ReviewIssue, ReviewOutput } from "@codeguard/types";
-import { OpenAICompatibleProvider } from "./llm";
+import { createLLMProvider } from "./provider";
+import { addUsage, completeStructured, validateJSON } from "./structured";
+export { ReviewValidationError } from "./structured";
 import type { ChatMessage, LLMProvider, LLMUsage } from "./llm";
 import { buildDiffContext, DEFAULT_DIFF_BUDGET_CHARS } from "./diff";
 import type { PRFileInput } from "./diff";
@@ -10,13 +11,6 @@ import { createIgnoreMatcher, DEFAULT_REPO_CONFIG, severityAtLeast } from "./rep
 import type { RepoConfig } from "./repo-config";
 import { applyVerdicts, buildVerifyMessages, VerificationOutputSchema } from "./verify";
 import type { VerifiedIssues } from "./verify";
-
-export class ReviewValidationError extends Error {
-  constructor(message: string, readonly raw: string) {
-    super(message);
-    this.name = "ReviewValidationError";
-  }
-}
 
 export interface ReviewRun extends ReviewOutput {
   model: string;
@@ -85,7 +79,7 @@ export class ReviewEngine {
   }
 
   static fromEnv(opts?: ReviewEngineOptions): ReviewEngine {
-    return new ReviewEngine(OpenAICompatibleProvider.fromConfig(), opts);
+    return new ReviewEngine(createLLMProvider(), opts);
   }
 
   get model(): string {
@@ -176,7 +170,10 @@ export class ReviewEngine {
   ): Promise<{ issues: ReviewIssue[]; summary: VerificationSummary; usage: LLMUsage | null }> {
     if (!this.verifyFindings || issues.length === 0) return { issues, summary: SKIPPED_VERIFICATION, usage: null };
     try {
-      const { value, usage } = await this.completeValidated(buildVerifyMessages({ diff, relatedCode, issues }), parseVerificationOutput);
+      const { value, usage } = await completeStructured(this.llm, buildVerifyMessages({ diff, relatedCode, issues }), parseVerificationOutput, {
+        maxRepairAttempts: this.maxRepairAttempts,
+        logger: this.logger,
+      });
       const result = applyVerdicts(issues, value);
       this.logger.info(
         `[review-engine] verified ${issues.length} finding(s): ${result.confirmed} confirmed, ${result.uncertain} uncertain, ${result.rejected.length} rejected`
@@ -196,50 +193,12 @@ export class ReviewEngine {
 
   private async run(messages: ChatMessage[]): Promise<ReviewRun> {
     const started = Date.now();
-    const { value, usage } = await this.completeValidated(messages, parseReviewOutput);
+    const { value, usage } = await completeStructured(this.llm, messages, parseReviewOutput, { maxRepairAttempts: this.maxRepairAttempts, logger: this.logger });
     return { ...value, model: this.llm.model, provider: this.llm.name, usage, durationMs: Date.now() - started };
-  }
-
-  /** Call the model and validate its JSON, with up to `maxRepairAttempts` repair turns. */
-  private async completeValidated<T>(messages: ChatMessage[], parse: (raw: string) => T): Promise<{ value: T; usage: LLMUsage | null }> {
-    let conversation = messages;
-    let lastError: ReviewValidationError | null = null;
-    let usage: LLMUsage | null = null;
-
-    for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt++) {
-      const result = await this.llm.completeJSON(conversation);
-      usage = addUsage(usage, result.usage);
-      try {
-        return { value: parse(result.content), usage };
-      } catch (err) {
-        if (!(err instanceof ReviewValidationError)) throw err;
-        lastError = err;
-        this.logger.warn(`[review-engine] invalid model output (attempt ${attempt + 1}): ${err.message}`);
-        conversation = [
-          ...messages,
-          { role: "assistant", content: result.content.slice(0, 8_000) },
-          {
-            role: "user",
-            content: `Your previous answer was not valid: ${err.message}. Reply again with ONLY the JSON object in the required shape.`,
-          },
-        ];
-      }
-    }
-    throw lastError!;
   }
 }
 
 const SKIPPED_VERIFICATION: VerificationSummary = { status: "skipped", confirmed: 0, uncertain: 0, rejected: [] };
-
-function addUsage(a: LLMUsage | null, b: LLMUsage | null): LLMUsage | null {
-  if (!a) return b;
-  if (!b) return a;
-  return {
-    promptTokens: a.promptTokens + b.promptTokens,
-    completionTokens: a.completionTokens + b.completionTokens,
-    totalTokens: a.totalTokens + b.totalTokens,
-  };
-}
 
 /** Parse + validate model output. Tolerates ```json fences and leading prose. */
 export function parseReviewOutput(raw: string): ReviewOutput {
@@ -248,31 +207,6 @@ export function parseReviewOutput(raw: string): ReviewOutput {
 
 export function parseVerificationOutput(raw: string) {
   return validateJSON(raw, VerificationOutputSchema);
-}
-
-function validateJSON<S extends z.ZodTypeAny>(raw: string, schema: S): z.infer<S> {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start === -1 || end <= start) throw new ReviewValidationError("response is not JSON", raw);
-    try {
-      json = JSON.parse(raw.slice(start, end + 1));
-    } catch {
-      throw new ReviewValidationError("response is not JSON", raw);
-    }
-  }
-  const parsed = schema.safeParse(json);
-  if (!parsed.success) {
-    const detail = parsed.error.issues
-      .slice(0, 5)
-      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-      .join("; ");
-    throw new ReviewValidationError(`schema mismatch — ${detail}`, raw);
-  }
-  return parsed.data;
 }
 
 /**

@@ -74,6 +74,10 @@ export async function handleGitHubWebhook(req: Request, tag: string): Promise<Re
     console.error(`[${tag}] installation event handling failed:`, err);
   }
 
+  // Broker not reachable from here: the stored row is the outbox entry and
+  // the workers' sweeper publishes it.
+  if (!env.KAFKA_PUBLISH_FROM_WEB) return NextResponse.json({ received: true, queued: true });
+
   try {
     const event: WebhookReceivedEvent = { githubEvent, deliveryId, payload: rawBody, receivedAt: new Date().toISOString() };
     const producer = await getSharedProducer();

@@ -23,6 +23,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import PixelLoader, { PixelLoaderBlock } from "@/components/ui/PixelLoader";
+import { progressLabel } from "@/lib/poll-review";
 
 type Severity = "critical" | "high" | "medium" | "low";
 
@@ -34,6 +35,22 @@ interface Issue {
   line: number | null;
   message: string;
   suggestion: string | null;
+  status?: string;
+  source?: string | null;
+  confidence?: number | null;
+}
+
+interface Assurance {
+  decision: { verdict: string; conclusion: string; headline: string; reasons: string[] } | null;
+  scorecard: { overall: number; dimensions: Array<{ id: string; label: string; score: number | null; note: string }> } | null;
+  policies: Array<{ id: string; status: string; message: string }>;
+  risk: { score: number; level: string; factors: string[] } | null;
+  intent: { summary: string; changeType: string; stated: boolean } | null;
+  alignment: { alignment: string; score: number; summary: string } | null;
+  recommendations: string[];
+  skills: string[];
+  verification: { status: string; confirmed: number; uncertain: number; rejected: unknown[] } | null;
+  trace: Array<{ name: string; status: string; durationMs: number }>;
 }
 
 interface ReviewDetail {
@@ -65,6 +82,9 @@ interface ReviewDetail {
     changedFiles: number;
   } | null;
   details: { tokens: number | null; durationMs: number | null; githubUrl: string | null } | null;
+  assurance: Assurance | null;
+  progress: string | null;
+  error: string | null;
 }
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
@@ -157,7 +177,7 @@ export default function ReviewDetailPage() {
   if (review.status === "pending" || review.status === "in_progress") {
     return (
       <CenteredState
-        icon={<PixelLoader label={review.status === "pending" ? "Queued" : "Reviewing"} />}
+        icon={<PixelLoader label={review.status === "pending" ? "Queued" : progressLabel(review.progress)} />}
         title={review.title || "Review in progress"}
         body="CodeGuard is reading the changes. This page updates on its own when the review is done."
       />
@@ -168,7 +188,7 @@ export default function ReviewDetailPage() {
       <CenteredState
         icon={<XCircle size={26} className="text-rose-400" />}
         title="This review failed"
-        body="Something went wrong while reviewing these changes. Start a new review of the pull request to try again."
+        body={review.error ?? "Something went wrong while reviewing these changes. Start a new review of the pull request to try again."}
         extra={
           review.pullRequest && (
             <a
@@ -199,9 +219,11 @@ function ReviewReport({ review, onUpdate }: { review: ReviewDetail; onUpdate: (r
 
   const counts = useMemo(() => {
     const c: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-    for (const i of review.issues) c[(i.severity in c ? i.severity : "low") as Severity]++;
+    // Resolved / dismissed findings no longer block.
+    for (const i of review.issues) if (i.status !== "resolved" && i.status !== "dismissed") c[(i.severity in c ? i.severity : "low") as Severity]++;
     return c;
   }, [review.issues]);
+  const updateIssue = (changed: Issue) => onUpdate({ ...review, issues: review.issues.map((i) => (i.id === changed.id ? changed : i)) });
   const blocking = counts.critical + counts.high;
   const categories = useMemo(() => Array.from(new Set(review.issues.map((i) => i.category))).sort(), [review.issues]);
 
@@ -358,6 +380,8 @@ function ReviewReport({ review, onUpdate }: { review: ReviewDetail; onUpdate: (r
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
+          {review.assurance && <AssurancePanel assurance={review.assurance} />}
+
           {review.summary && (
             <section className="rounded-md border border-cg-border p-4">
               <h2 className="text-sm font-medium text-cg-text mb-2">Summary</h2>
@@ -400,7 +424,7 @@ function ReviewReport({ review, onUpdate }: { review: ReviewDetail; onUpdate: (r
                 </button>
               </div>
             ) : (
-              groups.map(([file, list]) => <FileGroup key={file} file={file} issues={list} fileUrl={fileUrl} />)
+              groups.map(([file, list]) => <FileGroup key={file} file={file} issues={list} fileUrl={fileUrl} reviewId={review.id} onIssueChange={updateIssue} />)
             )}
           </section>
 
@@ -457,7 +481,7 @@ function ReviewReport({ review, onUpdate }: { review: ReviewDetail; onUpdate: (r
   );
 }
 
-function FileGroup({ file, issues, fileUrl }: { file: string; issues: Issue[]; fileUrl: (file: string, line: number | null) => string | null }) {
+function FileGroup({ file, issues, fileUrl, reviewId, onIssueChange }: { file: string; issues: Issue[]; fileUrl: (file: string, line: number | null) => string | null; reviewId: string; onIssueChange: (issue: Issue) => void }) {
   const [open, setOpen] = useState(true);
   const href = fileUrl(file, null);
   return (
@@ -478,7 +502,7 @@ function FileGroup({ file, issues, fileUrl }: { file: string; issues: Issue[]; f
       {open && (
         <ul className="divide-y divide-cg-border">
           {issues.map((issue, i) => (
-            <IssueCard key={issue.id ?? i} issue={issue} href={fileUrl(file, issue.line)} />
+            <IssueCard key={issue.id ?? i} issue={issue} href={fileUrl(file, issue.line)} reviewId={reviewId} onChange={onIssueChange} />
           ))}
         </ul>
       )}
@@ -486,19 +510,39 @@ function FileGroup({ file, issues, fileUrl }: { file: string; issues: Issue[]; f
   );
 }
 
-function IssueCard({ issue, href }: { issue: Issue; href: string | null }) {
+function IssueCard({ issue, href, reviewId, onChange }: { issue: Issue; href: string | null; reviewId: string; onChange: (issue: Issue) => void }) {
   const meta = metaFor(issue.severity);
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const closed = issue.status === "resolved" || issue.status === "dismissed";
+  const setStatus = async (status: "open" | "resolved" | "dismissed") => {
+    if (!issue.id || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/reviews/${reviewId}/findings/${issue.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.finding) onChange({ ...issue, status: data.finding.status });
+    } finally {
+      setSaving(false);
+    }
+  };
   const copy = () => {
     void navigator.clipboard.writeText(issue.suggestion ?? "");
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   };
   return (
-    <li className={`p-4 flex flex-col gap-3 border-l-2 ${meta.ring}`}>
+    <li className={`p-4 flex flex-col gap-3 border-l-2 ${meta.ring} ${closed ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`px-1.5 py-px rounded border text-[11px] font-medium ${meta.pill}`}>{meta.label}</span>
         <span className="px-1.5 py-px rounded bg-cg-raised text-[11px] text-cg-muted capitalize">{issue.category.replace(/_/g, " ")}</span>
+        {issue.source && <span className="px-1.5 py-px rounded bg-cg-raised text-[11px] text-cg-subtle">{issue.source.replace(/_/g, " ")}</span>}
+        {issue.confidence != null && <span className="text-[11px] text-cg-subtle tabular-nums" title="How likely this finding is real">{Math.round(issue.confidence * 100)}% sure</span>}
+        {closed && <span className="px-1.5 py-px rounded border border-cg-border text-[11px] text-cg-muted capitalize">{issue.status}</span>}
         {issue.line != null &&
           (href ? (
             <a href={href} target="_blank" rel="noreferrer" className="ml-auto text-[11px] font-mono text-cg-subtle hover:text-cg-text inline-flex items-center gap-1">
@@ -539,7 +583,109 @@ function IssueCard({ issue, href }: { issue: Issue; href: string | null }) {
           </div>
         </div>
       )}
+
+      {issue.id && (
+        <div className="flex items-center gap-2">
+          {closed ? (
+            <button onClick={() => setStatus("open")} disabled={saving} className="h-7 px-2.5 rounded border border-cg-border text-[11px] text-cg-muted hover:text-cg-text disabled:opacity-60">
+              Reopen
+            </button>
+          ) : (
+            <>
+              <button onClick={() => setStatus("resolved")} disabled={saving} className="h-7 px-2.5 rounded border border-cg-border text-[11px] text-cg-muted hover:text-cg-text inline-flex items-center gap-1 disabled:opacity-60">
+                <Check size={11} /> Resolve
+              </button>
+              <button onClick={() => setStatus("dismissed")} disabled={saving} className="h-7 px-2.5 rounded text-[11px] text-cg-subtle hover:text-cg-text disabled:opacity-60">
+                Dismiss
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </li>
+  );
+}
+
+const VERDICT_META: Record<string, { label: string; tone: string }> = {
+  approve: { label: "Approve", tone: "text-emerald-400" },
+  comment: { label: "Review needed", tone: "text-amber-300" },
+  request_changes: { label: "Changes requested", tone: "text-rose-400" },
+};
+const POLICY_TONE: Record<string, string> = { pass: "text-emerald-400", warn: "text-amber-300", fail: "text-rose-400" };
+const RISK_TONE: Record<string, string> = { low: "text-emerald-400", medium: "text-amber-300", high: "text-orange-300", critical: "text-rose-400" };
+
+/** Decision, scorecard, risk and policy results from the staged review pipeline. */
+function AssurancePanel({ assurance }: { assurance: Assurance }) {
+  const d = assurance.decision;
+  const verdictMeta = d ? (VERDICT_META[d.verdict] ?? VERDICT_META.comment) : null;
+  return (
+    <section className="rounded-md border border-cg-border p-4 flex flex-col gap-4">
+      {d && verdictMeta && (
+        <div>
+          <h2 className={`text-sm font-medium ${verdictMeta.tone}`}>{verdictMeta.label}</h2>
+          <p className="text-sm text-cg-muted mt-1">{d.headline}</p>
+          {d.reasons.length > 0 && (
+            <ul className="mt-2 text-xs text-cg-muted list-disc pl-4 flex flex-col gap-0.5">
+              {d.reasons.map((r) => <li key={r}>{r}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {assurance.intent?.stated && (
+        <p className="text-xs text-cg-muted">
+          <span className="text-cg-subtle">Intent:</span> {assurance.intent.summary}
+          {assurance.alignment && (
+            <span className="text-cg-subtle"> · matches the change: {assurance.alignment.alignment} ({assurance.alignment.score}/10)</span>
+          )}
+        </p>
+      )}
+
+      {assurance.scorecard && (
+        <div>
+          <h3 className="text-xs font-medium text-cg-text mb-2">Scorecard</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+            {assurance.scorecard.dimensions.map((dim) => (
+              <div key={dim.id} className="flex items-baseline justify-between gap-3 text-xs" title={dim.note}>
+                <span className="text-cg-muted truncate">{dim.label}</span>
+                <span className={`tabular-nums ${dim.score === null ? "text-cg-subtle" : scoreTone(dim.score)}`}>{dim.score === null ? "—" : dim.score.toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {assurance.risk && (
+        <p className="text-xs text-cg-muted">
+          <span className={`font-medium capitalize ${RISK_TONE[assurance.risk.level] ?? ""}`}>{assurance.risk.level} risk</span>
+          <span className="text-cg-subtle"> ({assurance.risk.score}/100)</span>
+          {assurance.risk.factors.length > 0 && <span> — {assurance.risk.factors.slice(0, 4).join("; ")}</span>}
+        </p>
+      )}
+
+      {assurance.policies.length > 0 && (
+        <div>
+          <h3 className="text-xs font-medium text-cg-text mb-1.5">Policy checks</h3>
+          <ul className="flex flex-col gap-1 text-xs">
+            {assurance.policies.map((p) => (
+              <li key={p.id} className="flex gap-2">
+                <span className={`uppercase text-[10px] font-medium w-9 shrink-0 ${POLICY_TONE[p.status] ?? ""}`}>{p.status}</span>
+                <span className="text-cg-muted">{p.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {assurance.recommendations.length > 0 && (
+        <div>
+          <h3 className="text-xs font-medium text-cg-text mb-1.5">Recommendations</h3>
+          <ul className="text-xs text-cg-muted list-disc pl-4 flex flex-col gap-0.5">
+            {assurance.recommendations.map((r) => <li key={r}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
 

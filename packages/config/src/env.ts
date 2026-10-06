@@ -30,7 +30,7 @@ export const EnvSchema = z.object({
 
   // ── LLM ─────────────────────────────────────────────────────────────────
   /** Which chat-completions provider to use for reviews. */
-  LLM_PROVIDER: z.enum(["groq", "openai"]).default("groq"),
+  LLM_PROVIDER: z.enum(["groq", "openai", "anthropic"]).default("groq"),
   /** Overrides the provider's default model. `GROQ_MODEL` is still honoured for Groq. */
   LLM_MODEL: optionalString,
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
@@ -38,6 +38,10 @@ export const EnvSchema = z.object({
   GROQ_MODEL: optionalString,
   OPENAI_API_KEY: optionalString,
   OPENAI_MODEL: optionalString,
+  ANTHROPIC_API_KEY: optionalString,
+  ANTHROPIC_MODEL: optionalString,
+  /** Anthropic effort level for review calls (Opus 5.5 defaults to medium when unset). */
+  ANTHROPIC_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
   /** Embeddings always use OpenAI (text-embedding-3-small). */
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
 
@@ -63,6 +67,13 @@ export const EnvSchema = z.object({
   KAFKA_SSL: booleanString(true),
   /** Verify the broker certificate. On by default — only disable for local dev. */
   KAFKA_SSL_REJECT_UNAUTHORIZED: booleanString(true),
+  /**
+   * Whether the web app publishes to Kafka itself. Set false when the broker is
+   * private to the workers (e.g. Kafka as a Render private service with the
+   * web app on Vercel): the web app then only writes Postgres, and the
+   * workers' outbox / recovery sweepers publish.
+   */
+  KAFKA_PUBLISH_FROM_WEB: booleanString(true),
 
   // ── App ─────────────────────────────────────────────────────────────────
   NEXT_PUBLIC_APP_URL: optionalString,
@@ -107,16 +118,19 @@ function need<K extends keyof Env>(env: Env, keys: K[], feature: string) {
 // ── Feature-level accessors ───────────────────────────────────────────────
 
 export interface LLMConfig {
-  provider: "groq" | "openai";
+  provider: "groq" | "openai" | "anthropic";
   apiKey: string;
   model: string;
   baseUrl: string;
   timeoutMs: number;
+  /** Anthropic only. */
+  effort?: Env["ANTHROPIC_EFFORT"];
 }
 
 const PROVIDER_DEFAULTS = {
   groq: { baseUrl: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b" },
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
+  anthropic: { baseUrl: "https://api.anthropic.com/v1", model: "claude-opus-5-5" },
 } as const;
 
 /**
@@ -133,6 +147,17 @@ export function getLLMConfig(env: Env = getEnv()): LLMConfig {
       model: env.LLM_MODEL ?? env.GROQ_MODEL ?? PROVIDER_DEFAULTS.groq.model,
       baseUrl: PROVIDER_DEFAULTS.groq.baseUrl,
       timeoutMs: env.LLM_TIMEOUT_MS,
+    };
+  }
+  if (provider === "anthropic") {
+    need(env, ["ANTHROPIC_API_KEY"], "The Anthropic review model (LLM_PROVIDER=anthropic)");
+    return {
+      provider,
+      apiKey: env.ANTHROPIC_API_KEY!,
+      model: env.LLM_MODEL ?? env.ANTHROPIC_MODEL ?? PROVIDER_DEFAULTS.anthropic.model,
+      baseUrl: PROVIDER_DEFAULTS.anthropic.baseUrl,
+      timeoutMs: env.LLM_TIMEOUT_MS,
+      effort: env.ANTHROPIC_EFFORT,
     };
   }
   need(env, ["OPENAI_API_KEY"], "The OpenAI review model (LLM_PROVIDER=openai)");

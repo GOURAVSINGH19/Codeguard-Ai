@@ -103,6 +103,16 @@ describe("handleGitHubWebhook", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("only stores the delivery when the broker is private to the workers", async () => {
+    vi.stubEnv("KAFKA_PUBLISH_FROM_WEB", "false");
+    resetEnvCache();
+    const res = await handleGitHubWebhook(request(), "test");
+    expect(await res.json()).toMatchObject({ received: true, queued: true });
+    expect(deliveries.has("d-1")).toBe(true);
+    expect(sent).toHaveLength(0);
+    vi.unstubAllEnvs();
+  });
+
   it("still acknowledges GitHub when Kafka is down (outbox keeps the delivery)", async () => {
     kafkaDown = true;
     const res = await handleGitHubWebhook(request(), "test");

@@ -18,6 +18,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@codeguard/config": "workspace:*",
     "@codeguard/types": "workspace:*",
     "picomatch": "^4.0.2",

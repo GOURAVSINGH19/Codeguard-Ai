@@ -16,11 +16,11 @@ services:
     image: confluentinc/cp-kafka:7.7.1
     container_name: codeguard-kafka
     ports:
-      - "19092:19092"   # Kafka API for the host machine
+      - "19092:19092" # Kafka API for the host machine
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      CLUSTER_ID: Q29kZUd1YXJkTG9jYWwxMQ   # any fixed base64 id; keeps the volume reusable
+      CLUSTER_ID: Q29kZUd1YXJkTG9jYWwxMQ # any fixed base64 id; keeps the volume reusable
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:19092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092
@@ -39,24 +39,47 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1",
+        ]
       interval: 10s
       timeout: 10s
       retries: 10
       start_period: 20s
 
-  # ─── Kafka UI (topic / message browser) → http://localhost:8080 ──────────
-  # Redpanda Console works with any Kafka broker, including cp-kafka.
-  kafka-console:
-    image: redpandadata/console:v2.5.2
-    container_name: codeguard-kafka-console
+  # ─── CodeGuard workers (all Kafka consumers + sweepers) ──────────────────
+  # `docker compose up -d --build kafka worker` runs the worker against the
+  # broker above. Secrets (DATABASE_URL, LLM keys, GitHub App) come from
+  # apps/workers/.env — the same file `pnpm dev:worker` reads; the Kafka
+  # settings below override any hosted-Kafka ones in it.
+  #
+  # The web app (Vercel) cannot reach this broker, so set
+  # KAFKA_PUBLISH_FROM_WEB=false in Vercel: it then only writes to Postgres
+  # and the sweepers here publish within ~5 seconds.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    container_name: codeguard-worker
     depends_on:
       kafka:
         condition: service_healthy
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    env_file: apps/workers/.env
     environment:
       KAFKA_BROKERS: kafka:9092
+      # Empty = unset: the local broker needs no SASL/TLS.
+      KAFKA_HOST: ""
+      KAFKA_USERNAME: ""
+      KAFKA_PASSWORD: ""
+      # Pick up webhooks and dashboard reviews from Postgres quickly.
+      OUTBOX_SWEEP_INTERVAL_MS: "5000"
+      OUTBOX_MIN_AGE_MS: "0"
+      REVIEW_RECOVERY_INTERVAL_MS: "5000"
+      REVIEW_PENDING_GRACE_MS: "0"
+    mem_limit: 1g
 
 volumes:
   redis_data:

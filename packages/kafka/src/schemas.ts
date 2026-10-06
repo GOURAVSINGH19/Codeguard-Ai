@@ -33,6 +33,13 @@ export const ReviewRequestedEventSchema = z.object({
   previousHeadSha: z.string().min(7).nullable().optional(),
   /** GitHub delivery id that caused this request (for tracing) */
   deliveryId: z.string().optional(),
+  /**
+   * Existing `pending` review row to run (dashboard requests and recovered
+   * reviews). Without it the worker claims a new row for (PR, head SHA).
+   */
+  reviewId: z.string().uuid().optional(),
+  /** Post the result to GitHub (review + Check Run). Defaults to true for webhook-triggered reviews. */
+  publishToGitHub: z.boolean().optional(),
   /** ISO timestamp */
   requestedAt: z.string().datetime(),
 });

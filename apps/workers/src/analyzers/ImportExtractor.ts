@@ -1,109 +1,71 @@
 import path from "path";
+import type { ImportResolver } from "@codeguard/review-engine";
 
 /**
  * ImportExtractor
  *
- * Parses TypeScript/JavaScript source files with regex to extract
- * import paths, then resolves them to file paths relative to the repo root.
+ * Extracts import specifiers from source text with regex and resolves them to
+ * repository file paths.
  *
- * Why regex instead of a real TS parser (ts-morph, @babel/parser)?
- * - No additional dependencies
- * - Fast enough for bulk indexing (microseconds per file)
- * - We only need the paths, not the AST
- * - Works for JS, TS, JSX, TSX, Python (basic), Go (basic)
+ * With an `ImportResolver` (built from the repository snapshot) it resolves
+ * relative imports, tsconfig path aliases (`@/lib/x`) and workspace packages
+ * (`@codeguard/db`), and only returns files that exist. Without one it falls
+ * back to the old best-effort guess for relative imports only.
  *
  * Trade-off: dynamic imports (require(variable), import(someVar)) are missed.
  * That's acceptable — we're building a risk heuristic, not a type checker.
  */
 export class ImportExtractor {
+  constructor(private readonly resolver?: ImportResolver) {}
+
   /**
-   * Extract all import paths from a file's source content.
-   * Returns only relative imports (starting with ./ or ../) — we skip
-   * node_modules imports because we only care about in-repo dependencies.
-   *
    * @param content    File source code
-   * @param filePath   The file's path relative to repo root (used to resolve relative imports)
-   * @param repoRoot   Repo root path (default: empty string for relative-only resolution)
+   * @param filePath   The file's path relative to repo root
    */
   extractImports(content: string, filePath: string): string[] {
-    const rawImports: string[] = [];
+    const specs = this.extractSpecifiers(content);
+    const resolved = new Set<string>();
+    for (const spec of specs) {
+      const hit = this.resolver ? this.resolver.resolve(filePath, spec) : this.guessRelative(filePath, spec);
+      if (hit && hit !== filePath) resolved.add(hit);
+    }
+    return [...resolved];
+  }
+
+  /** Raw import specifiers, with Python relative imports converted to path form. */
+  extractSpecifiers(content: string): string[] {
+    const raw: string[] = [];
 
     // ── TypeScript / JavaScript ────────────────────────────────────────────
-    // Matches: import ... from "./path"
-    //          import "./path"
-    //          export ... from "./path"
-    //          const x = require("./path")
-    //          const x = await import("./path")
+    //   import ... from "x" · import "x" · export ... from "x" · require("x") · import("x")
     const tsPatterns = [
-      /(?:import|export)\s+(?:.*?\s+from\s+)?['"]([^'"]+)['"]/g,
+      /(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"\n]+)['"]/g,
       /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
       /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
     ];
-
     for (const pattern of tsPatterns) {
       let match;
-      while ((match = pattern.exec(content)) !== null) {
-        rawImports.push(match[1]);
-      }
+      while ((match = pattern.exec(content)) !== null) raw.push(match[1]);
     }
 
-    // ── Python ────────────────────────────────────────────────────────────
-    // Matches: from .module import x
-    //          from ..utils import y
-    const pythonPattern = /from\s+(\.+\w*(?:\.\w+)*)\s+import/g;
-    let pyMatch;
-    while ((pyMatch = pythonPattern.exec(content)) !== null) {
-      rawImports.push(pyMatch[1]);
+    // ── Python relative imports ────────────────────────────────────────────
+    //   from .module import x   → ./module
+    //   from ..pkg.mod import y → ../pkg/mod
+    const pythonPattern = /^\s*from\s+(\.+)([\w.]*)\s+import/gm;
+    let py;
+    while ((py = pythonPattern.exec(content)) !== null) {
+      const ups = py[1].length - 1;
+      const prefix = ups === 0 ? "./" : "../".repeat(ups);
+      raw.push(prefix + py[2].replace(/\./g, "/"));
     }
-
-    // ── Filter and resolve ────────────────────────────────────────────────
-    const fileDir = path.dirname(filePath);
-    const resolved: string[] = [];
-
-    for (const imp of rawImports) {
-      // Skip absolute imports (node_modules, packages)
-      if (!imp.startsWith(".")) continue;
-
-      // Resolve relative to the importing file
-      const resolvedPath = this.resolveImportPath(fileDir, imp);
-      if (resolvedPath) {
-        resolved.push(resolvedPath);
-      }
-    }
-
-    // Deduplicate
-    return [...new Set(resolved)];
+    return [...new Set(raw)];
   }
 
-  /**
-   * Resolve a relative import path to a normalised repo-root-relative path.
-   *
-   * "./utils"       → "src/auth/utils.ts"  (tries .ts, .tsx, .js, /index.ts)
-   * "../db/client"  → "src/db/client.ts"
-   */
-  private resolveImportPath(
-    fromDir: string,
-    importPath: string
-  ): string | null {
-    // Normalise path separators
-    const joined = path
-      .join(fromDir, importPath)
-      .replace(/\\/g, "/");
-
-    // If already has extension, return as-is
-    if (/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/.test(joined)) {
-      return joined;
-    }
-
-    // Try common extensions in priority order
-    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
-    for (const ext of extensions) {
-      return joined + ext; // Return the first candidate
-      // In a full implementation you'd check if the file exists in the tree
-      // Here we return the .ts version as the canonical guess
-    }
-
-    // Try index files
-    return joined + "/index.ts";
+  /** Fallback when no repository snapshot is available. */
+  private guessRelative(filePath: string, spec: string): string | null {
+    if (!spec.startsWith(".")) return null;
+    const joined = path.posix.join(path.posix.dirname(filePath), spec);
+    if (/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/.test(joined)) return joined;
+    return `${joined}.ts`;
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { pollReview } from "@/lib/poll-review";
+import { pollReview, progressLabel } from "@/lib/poll-review";
 import Link from "next/link";
 import { SeverityBadge, CategoryBadge, ScoreDisplay, SeverityCountBar } from "./ui/SeverityBadge";
 import PixelLoader from "./ui/PixelLoader";
@@ -72,6 +72,7 @@ export default function PRReviewer() {
   const [loadingRepos, setLoadingRepos] = useState<boolean>(true);
   const [loadingPulls, setLoadingPulls] = useState<boolean>(false);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [postingComment, setPostingComment] = useState<boolean>(false);
 
   const [reviewResult, setReviewResult] = useState<PRReviewResult | null>(null);
@@ -178,6 +179,7 @@ export default function PRReviewer() {
   const handleRunPRReview = async () => {
     if (!selectedRepo || !selectedPR || analyzing) return;
     setAnalyzing(true);
+    setProgress(null);
     setError(null);
     setReviewResult(null);
     setGithubSuccessUrl(null);
@@ -196,7 +198,7 @@ export default function PRReviewer() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to analyze PR diff");
       // 202 Accepted: the review runs in the background — poll until done.
-      const review = await pollReview(data.id);
+      const review = await pollReview(data.id, { onProgress: (node) => setProgress(node) });
       setReviewResult({
         id: review.id,
         prNumber: data.prNumber,
@@ -426,7 +428,7 @@ export default function PRReviewer() {
             className="w-full sm:w-auto py-3 px-6 rounded-xl font-semibold text-xs bg-orange-500 hover:bg-orange-400 text-white transition disabled:opacity-40 flex items-center justify-center gap-2 shrink-0"
           >
             {analyzing ? (
-              <PixelLoader label="Analyzing diff" className="!text-white !text-xs" />
+              <PixelLoader label={progressLabel(progress)} className="!text-white !text-xs" />
             ) : (
               <span>Review PR diff</span>
             )}
