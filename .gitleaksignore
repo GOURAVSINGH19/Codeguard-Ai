@@ -1,0 +1,5 @@
+# Fake credentials used as fixtures by the secret-scanner tests, committed in
+# 7cd9f15 before they were assembled at runtime. Not real secrets.
+7cd9f1558f85f4646fb13c1d5e02c2dac046e8ff:packages/review-engine/src/__tests__/assurance.test.ts:generic-api-key:68
+7cd9f1558f85f4646fb13c1d5e02c2dac046e8ff:packages/review-engine/src/__tests__/assurance.test.ts:aws-access-token:55
+7cd9f1558f85f4646fb13c1d5e02c2dac046e8ff:packages/review-engine/src/__tests__/assurance.test.ts:aws-access-token:58

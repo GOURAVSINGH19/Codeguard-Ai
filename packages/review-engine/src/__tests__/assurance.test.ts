@@ -51,11 +51,16 @@ describe("addedLines", () => {
 });
 
 describe("security scan", () => {
+  // Fake credentials are assembled at runtime so secret scanners (gitleaks in
+  // CI) don't flag this file.
+  const fakeAwsKey = "AKIA" + "ABCDEFGHIJKLMNOP";
+  const fakeClientSecret = "q8Zr2xN7" + "vLp4Tk9Wm3Yb";
+
   it("finds provider tokens with high confidence and redacts them", () => {
-    const [f] = scanSecrets([file("src/config.ts", ['const key = "AKIAABCDEFGHIJKLMNOP";'])]);
+    const [f] = scanSecrets([file("src/config.ts", [`const key = "${fakeAwsKey}";`])]);
     expect(f).toMatchObject({ ruleId: "secret/aws-access-key", severity: "critical", line: 10, deterministic: true });
     expect(f.confidence).toBeGreaterThanOrEqual(0.9);
-    expect(f.message).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(f.message).not.toContain(fakeAwsKey);
   });
 
   it("treats secrets in tests as lower confidence and ignores placeholders", () => {
@@ -65,7 +70,7 @@ describe("security scan", () => {
   });
 
   it("flags generic high-entropy assignments", () => {
-    const [f] = scanSecrets([file("src/a.ts", ['const clientSecret = "q8Zr2xN7vLp4Tk9Wm3Yb";'])]);
+    const [f] = scanSecrets([file("src/a.ts", [`const clientSecret = "${fakeClientSecret}";`])]);
     expect(f.ruleId).toBe("secret/generic-assignment");
   });
 

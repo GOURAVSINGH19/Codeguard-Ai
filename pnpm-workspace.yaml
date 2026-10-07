@@ -8,3 +8,10 @@ packages:
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
+
+# Security patches for transitive dependencies that Next.js pins below the
+# fixed version (flagged by `pnpm audit --prod` in CI). Drop an entry once
+# Next.js ships the patched version itself.
+overrides:
+  sharp: ^0.35.5
+  source-map-js: ^1.2.2
