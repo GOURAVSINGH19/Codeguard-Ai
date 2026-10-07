@@ -160,7 +160,7 @@ jobs:
     if: github.event_name == 'pull_request'
     continue-on-error: true
     env:
-      CODEGUARD_API_URL: ${{ secrets.CODEGUARD_API_URL }}
+      CODEGUARD_API_URL: ${{ secrets.CODEGUARDAPIURL }}
       CODEGUARD_API_KEY: ${{ secrets.CODEGUARD_API_KEY }}
     steps:
       - name: Request CodeGuard AI PR review
@@ -172,7 +172,7 @@ jobs:
           echo "Requesting CodeGuard AI review for $OWNER/$REPO#$PR_NUMBER"
 
           RESPONSE=$(curl --silent --show-error --fail --max-time 30 \
-            -X POST "$CODEGUARD_API_URL/api/github/review" \
+            -X POST "$CODEGUARDAPIURL/api/github/review" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CODEGUARD_API_KEY" \
             -d "{\"owner\":\"$OWNER\",\"repo\":\"$REPO\",\"pullNumber\":$PR_NUMBER}" 2>&1) || {
@@ -181,5 +181,5 @@ jobs:
             }
           echo "CodeGuard AI review started: $(echo "$RESPONSE" | head -c 300)"
       - name: Skip (not configured)
-        if: env.CODEGUARD_API_URL == ''
-        run: echo "CODEGUARD_API_URL secret not set — skipping self-review."
+        if: env.CODEGUARDAPIURL == ''
+        run: echo "CODEGUARDAPIURL secret not set — skipping self-review."
