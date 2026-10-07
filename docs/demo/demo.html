@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard AI Demo</title>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #121826; --panel2: #182033; --line: #263049;
+    --text: #e6ebf5; --muted: #8a94ab; --accent: #6ea8ff; --green: #3ccf8e;
+    --red: #ff6470; --amber: #ffb84d; --violet: #a98bff;
+    --mono: Consolas, "Cascadia Code", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; }
+  #stage { position: relative; width: 1280px; height: 720px; overflow: hidden;
+    background: radial-gradient(1000px 500px at 80% -10%, #1a2540 0%, transparent 60%), var(--bg); }
+  .scene { position: absolute; inset: 0 0 110px 0; padding: 40px 64px; display: none; flex-direction: column; justify-content: center; }
+  h2 { font-size: 30px; font-weight: 600; letter-spacing: -0.3px; }
+  h2 .n { color: var(--accent); font-family: var(--mono); font-size: 20px; margin-right: 12px; }
+  .sub { color: var(--muted); font-size: 17px; margin-top: 6px; }
+  .mono { font-family: var(--mono); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+
+  /* caption */
+  #caption { position: absolute; left: 0; right: 0; bottom: 0; height: 110px; padding: 22px 64px;
+    background: linear-gradient(transparent, rgba(0,0,0,.55) 30%); display: flex; align-items: center; gap: 20px; }
+  #capstep { font-family: var(--mono); color: var(--accent); font-size: 15px; min-width: 64px; white-space: nowrap; }
+  #captext { font-size: 22px; line-height: 1.35; max-width: 1080px; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 4px; background: var(--accent); }
+
+  /* s1 title */
+  #s1 { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .logo { font-size: 72px; font-weight: 700; letter-spacing: -1.5px; }
+  .logo span { color: var(--accent); }
+  .tag { color: var(--muted); font-size: 24px; margin-top: 14px; }
+  .chips { display: flex; gap: 10px; margin-top: 30px; flex-wrap: wrap; justify-content: center; }
+  .chip { border: 1px solid var(--line); background: var(--panel); padding: 7px 14px; border-radius: 999px; font-size: 15px; color: #c8d1e6; }
+
+  /* s2 PR */
+  .pr { margin-top: 28px; width: 1000px; padding: 24px 28px; }
+  .pr-head { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 600; }
+  .open { background: #1f7a4d; color: #fff; }
+  .pr-meta { color: var(--muted); margin-top: 8px; font-size: 15px; }
+  .diff { margin-top: 20px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-family: var(--mono); font-size: 17px; }
+  .diff .fh { background: var(--panel2); padding: 10px 16px; color: #c8d1e6; border-bottom: 1px solid var(--line); }
+  .diff .ln { padding: 6px 16px; white-space: pre; }
+  .diff .ctx { color: #8a94ab; }
+  .diff .del { background: rgba(255,100,112,.12); color: #ffb3b9; }
+  .diff .add { background: rgba(60,207,142,.12); color: #a9f0cf; }
+  .flag { margin-top: 16px; color: var(--amber); font-size: 17px; }
+
+  /* flow rows */
+  .flow { position: relative; display: flex; gap: 22px; margin-top: 60px; align-items: stretch; }
+  .node { flex: 1; padding: 18px; min-height: 150px; }
+  .node .k { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
+  .node .t { font-size: 19px; font-weight: 600; margin-top: 8px; }
+  .node .d { font-size: 14px; color: #b9c3d9; margin-top: 8px; line-height: 1.45; }
+  .node .ok { color: var(--green); font-weight: 700; }
+  .packet { position: absolute; top: -18px; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 18px var(--accent); }
+  .notes { display: flex; gap: 16px; margin-top: 34px; }
+  .note { padding: 12px 16px; font-size: 15px; color: #c8d1e6; flex: 1; }
+  .note b { color: var(--accent); }
+
+  /* graph */
+  .gwrap { display: flex; gap: 40px; margin-top: 24px; }
+  svg text { font-family: Consolas, monospace; }
+  .legend { flex: 1; padding: 20px 22px; font-family: var(--mono); font-size: 15px; line-height: 2; }
+  .legend .h { font-family: "Segoe UI"; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; }
+
+  /* rag */
+  .vec { display: flex; gap: 4px; align-items: flex-end; height: 60px; margin-top: 12px; }
+  .vec i { width: 9px; background: var(--violet); border-radius: 2px; }
+  .hit { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 14px; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+  .hit span:last-child { color: var(--green); }
+
+  /* pipeline */
+  .stages { display: flex; gap: 22px; margin-top: 36px; }
+  .stg { flex: 1; padding: 20px; }
+  .stg .t { font-size: 18px; font-weight: 600; }
+  .stg .k { color: var(--accent); font-family: var(--mono); font-size: 13px; }
+  .task { margin-top: 14px; font-family: var(--mono); font-size: 14px; color: #c8d1e6; }
+  .bar { height: 7px; background: var(--panel2); border-radius: 4px; margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 4px; }
+  .stg.s3 .bar i { background: var(--violet); }
+  .stg.s2 .bar i { background: var(--amber); }
+
+  /* verify */
+  .ftable { margin-top: 30px; width: 100%; }
+  .frow { display: grid; grid-template-columns: 140px 100px 1fr 150px; align-items: center; gap: 16px;
+    padding: 15px 20px; border-bottom: 1px solid var(--line); font-size: 17px; position: relative; }
+  .frow:last-child { border-bottom: 0; }
+  .sev-high { background: rgba(255,100,112,.18); color: var(--red); }
+  .sev-med { background: rgba(255,184,77,.18); color: var(--amber); }
+  .sev-low { background: rgba(110,168,255,.18); color: var(--accent); }
+  .v-ok { background: rgba(60,207,142,.18); color: var(--green); }
+  .v-un { background: rgba(255,184,77,.18); color: var(--amber); }
+  .v-no { background: rgba(255,100,112,.18); color: var(--red); }
+  .frow .txt { transition: none; }
+  .struck .txt, .struck .sevcell { opacity: .35; text-decoration: line-through; }
+
+  /* result */
+  .res { display: flex; gap: 26px; margin-top: 26px; }
+  .cmt { flex: 1.35; overflow: hidden; }
+  .cmt .diff { margin: 0; border: 0; border-radius: 0; }
+  .bubble { margin: 12px 16px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); padding: 14px 16px; font-size: 15px; line-height: 1.5; }
+  .bubble .who { font-weight: 700; margin-bottom: 6px; }
+  .bubble .who span { color: var(--muted); font-weight: 400; }
+  .bubble code { font-family: var(--mono); background: #0e1422; padding: 1px 6px; border-radius: 4px; }
+  .side { flex: 1; display: flex; flex-direction: column; gap: 20px; }
+  .check { padding: 18px 20px; }
+  .check .row { display: flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 600; }
+  .x { width: 26px; height: 26px; border-radius: 50%; background: var(--red); color: #fff; display: grid; place-items: center; font-size: 15px; }
+  .check .d { color: var(--muted); font-size: 15px; margin-top: 8px; }
+  .merge { margin-top: 14px; padding: 10px 14px; border-radius: 8px; background: rgba(255,100,112,.1); border: 1px solid rgba(255,100,112,.35); color: #ffb3b9; font-size: 15px; }
+  .score { padding: 18px 20px; display: flex; align-items: center; gap: 22px; }
+  .ring { width: 96px; height: 96px; }
+  .score .big { font-size: 15px; color: var(--muted); line-height: 1.6; }
+  .score .big b { color: var(--text); }
+
+  /* outro */
+  #s9 { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .url { margin-top: 26px; font-family: var(--mono); font-size: 20px; color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 1. Title -->
+  <div class="scene" id="s1">
+    <div class="logo" data-at="0.1">🛡️ CodeGuard <span>AI</span></div>
+    <div class="tag" data-at="0.6">An AI reviewer that reads every pull request before your teammates do</div>
+    <div class="chips" data-at="1.2">
+      <span class="chip">TypeScript monorepo</span><span class="chip">Next.js</span><span class="chip">Kafka</span>
+      <span class="chip">PostgreSQL + pgvector</span><span class="chip">Graph analysis</span><span class="chip">LLM (Groq / OpenAI)</span>
+    </div>
+  </div>
+
+  <!-- 2. PR opened -->
+  <div class="scene" id="s2">
+    <h2 data-at="0"><span class="n">01</span>A developer opens a pull request</h2>
+    <div class="card pr" data-at="0.5">
+      <div class="pr-head"><span class="pill open">Open</span>feat: make JWT algorithm configurable <span style="color:var(--muted);font-weight:400">#42</span></div>
+      <div class="pr-meta">wants to merge 1 commit into <span class="mono">main</span> · 1 file changed · +1 −1</div>
+      <div class="diff">
+        <div class="fh">src/utils/token.ts</div>
+        <div class="ln ctx">  import jwt from "jsonwebtoken";</div>
+        <div class="ln del" data-at="1.3">- const ALG = "RS256";</div>
+        <div class="ln add" data-at="1.8">+ const ALG = process.env.JWT_ALG ?? "none";</div>
+        <div class="ln ctx">  export const sign = (p) =&gt; jwt.sign(p, KEY, { algorithm: ALG });</div>
+      </div>
+      <div class="flag" data-at="3.0">⚠ Looks harmless. But if the env var is missing, tokens are accepted unsigned.</div>
+    </div>
+  </div>
+
+  <!-- 3. Webhook → Kafka -->
+  <div class="scene" id="s3">
+    <h2 data-at="0"><span class="n">02</span>Webhook → verified → durable event</h2>
+    <div class="sub" data-at="0.2">Nothing heavy runs in the HTTP request. The API only verifies, stores and publishes.</div>
+    <div class="flow" id="flow3">
+      <div class="packet" id="pk3"></div>
+      <div class="card node" data-at="0.4"><div class="k">GitHub</div><div class="t">pull_request.opened</div><div class="d">POST /api/webhooks/github</div></div>
+      <div class="card node" data-at="1.0"><div class="k">Security</div><div class="t">HMAC SHA-256</div><div class="d">timingSafeEqual on the signature<br><span class="ok">✓ verified</span></div></div>
+      <div class="card node" data-at="1.6"><div class="k">Postgres</div><div class="t">webhook_events</div><div class="d">Transactional outbox. Stored before it's published.</div></div>
+      <div class="card node" data-at="2.2"><div class="k">Kafka</div><div class="t mono" style="font-size:15px">codeguard.review.requested</div><div class="d">Zod-validated event schema</div></div>
+      <div class="card node" data-at="2.8"><div class="k">apps/workers</div><div class="t">Review worker</div><div class="d">Consumes and runs the review pipeline</div></div>
+    </div>
+    <div class="notes">
+      <div class="card note" data-at="3.6"><b>Idempotent</b>: duplicate deliveries don't create duplicate reviews</div>
+      <div class="card note" data-at="4.0"><b>Outbox sweeper</b>: re-publishes anything Kafka missed</div>
+      <div class="card note" data-at="4.4"><b>Dead-letter queue</b>: poison messages are parked, not looped</div>
+    </div>
+  </div>
+
+  <!-- 4. Blast radius -->
+  <div class="scene" id="s4">
+    <h2 data-at="0"><span class="n">03</span>Graph-aware context: who does this change affect?</h2>
+    <div class="sub" data-at="0.2">Import graph of the repo. BFS over reverse edges from the changed file.</div>
+    <div class="gwrap">
+      <svg width="700" height="390" viewBox="0 0 700 390">
+        <g stroke="#3a4766" stroke-width="2" fill="none">
+          <line x1="120" y1="195" x2="320" y2="95"  data-at="1.2"/>
+          <line x1="120" y1="195" x2="320" y2="295" data-at="1.2"/>
+          <line x1="410" y1="95"  x2="560" y2="175" data-at="2.4"/>
+          <line x1="560" y1="175" x2="610" y2="320" data-at="3.4" stroke-dasharray="6 6"/>
+        </g>
+        <!-- unrelated -->
+        <g data-at="0.5" opacity=".5">
+          <rect x="420" y="330" width="130" height="40" rx="8" fill="#121826" stroke="#263049"/>
+          <text x="485" y="355" fill="#6b7590" font-size="13" text-anchor="middle">Button.tsx</text>
+        </g>
+        <!-- depth 0 -->
+        <g data-at="0.5">
+          <circle cx="120" cy="195" r="62" fill="rgba(255,100,112,.12)" data-at="0.9"/>
+          <rect x="40" y="175" width="160" height="40" rx="8" fill="#2a1820" stroke="#ff6470" stroke-width="2"/>
+          <text x="120" y="200" fill="#ffd0d4" font-size="14" text-anchor="middle">utils/token.ts</text>
+        </g>
+        <!-- depth 1 -->
+        <g data-at="1.6">
+          <rect x="300" y="75" width="170" height="40" rx="8" fill="#2a2416" stroke="#ffb84d" stroke-width="2"/>
+          <text x="385" y="100" fill="#ffe2b3" font-size="14" text-anchor="middle">auth/verifyJWT.ts</text>
+        </g>
+        <g data-at="1.6">
+          <rect x="300" y="275" width="170" height="40" rx="8" fill="#2a2416" stroke="#ffb84d" stroke-width="2"/>
+          <text x="385" y="300" fill="#ffe2b3" font-size="14" text-anchor="middle">middleware/csrf.ts</text>
+        </g>
+        <!-- depth 2 -->
+        <g data-at="2.8">
+          <rect x="490" y="155" width="190" height="40" rx="8" fill="#16203a" stroke="#6ea8ff" stroke-width="2"/>
+          <text x="585" y="180" fill="#cfe0ff" font-size="14" text-anchor="middle">routes/api/users.ts</text>
+        </g>
+        <!-- depth 3 excluded -->
+        <g data-at="3.8" opacity=".55">
+          <rect x="570" y="300" width="100" height="40" rx="8" fill="#121826" stroke="#4a5570" stroke-dasharray="5 5"/>
+          <text x="620" y="325" fill="#8a94ab" font-size="14" text-anchor="middle">app.ts</text>
+        </g>
+      </svg>
+      <div class="card legend">
+        <div class="h">Review budget, ranked</div>
+        <div data-at="0.9"><span style="color:var(--red)">depth 0</span> token.ts · changed</div>
+        <div data-at="1.8"><span style="color:var(--amber)">depth 1</span> verifyJWT.ts · HIGH</div>
+        <div data-at="1.8"><span style="color:var(--amber)">depth 1</span> csrf.ts · HIGH</div>
+        <div data-at="2.9"><span style="color:var(--accent)">depth 2</span> users.ts · MEDIUM</div>
+        <div data-at="3.9" style="color:var(--muted)">depth 3 app.ts · budget full</div>
+        <div data-at="4.5" style="color:var(--muted)">Button.tsx · never included</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. RAG -->
+  <div class="scene" id="s5">
+    <h2 data-at="0"><span class="n">04</span>RAG: review against the repo's real code</h2>
+    <div class="sub" data-at="0.2">Code is chunked by AST, embedded and stored in pgvector. The diff is used as the query.</div>
+    <div class="flow" style="margin-top:44px">
+      <div class="card node" data-at="0.5"><div class="k">Query</div><div class="t">PR diff</div>
+        <div class="d mono" style="color:#a9f0cf">+ const ALG = process.env<br>&nbsp;&nbsp;.JWT_ALG ?? "none";</div></div>
+      <div class="card node" data-at="1.2"><div class="k">Embedding</div><div class="t">Vector</div>
+        <div class="vec" id="vec"></div></div>
+      <div class="card node" data-at="1.9"><div class="k">pgvector</div><div class="t">Cosine similarity</div>
+        <div class="d">Nearest-neighbour search over this repo's code chunks</div></div>
+      <div class="card node" style="flex:1.7" data-at="2.6"><div class="k">Top matches → prompt context</div>
+        <div class="hit" data-at="2.9"><span>auth/verifyJWT.ts:12–40</span><span>0.91</span></div>
+        <div class="hit" data-at="3.2"><span>auth/keys.ts:1–28</span><span>0.86</span></div>
+        <div class="hit" data-at="3.5"><span>middleware/csrf.ts:30–55</span><span>0.79</span></div>
+        <div class="hit" data-at="3.8" style="border:0"><span>config/env.ts:5–22</span><span>0.74</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="card note" data-at="4.4">So the model can say <b>"verifyJWT.ts trusts the header's alg"</b> instead of generic advice.</div>
+    </div>
+  </div>
+
+  <!-- 6. Pipeline -->
+  <div class="scene" id="s6">
+    <h2 data-at="0"><span class="n">05</span>A staged review pipeline</h2>
+    <div class="sub" data-at="0.2">Each stage runs its reviewers in parallel. Every model response is checked with a Zod schema.</div>
+    <div class="stages">
+      <div class="card stg" data-at="0.4"><div class="k">STAGE 1</div><div class="t">Understand the change</div>
+        <div class="task">committer<div class="bar"><i data-fill="0.8,2.0"></i></div></div>
+        <div class="task">align with PR intent<div class="bar"><i data-fill="0.8,2.3"></i></div></div>
+        <div class="task">volume<div class="bar"><i data-fill="0.8,1.7"></i></div></div>
+        <div class="task">cohesion<div class="bar"><i data-fill="0.8,2.2"></i></div></div>
+      </div>
+      <div class="card stg s2" data-at="1.0"><div class="k">STAGE 2</div><div class="t">Understand the risk</div>
+        <div class="task">blast radius<div class="bar"><i data-fill="2.4,3.6"></i></div></div>
+        <div class="task">criticality<div class="bar"><i data-fill="2.4,3.4"></i></div></div>
+        <div class="task">→ risk assessment<div class="bar"><i data-fill="3.6,4.2"></i></div></div>
+      </div>
+      <div class="card stg s3" data-at="1.6"><div class="k">STAGE 3</div><div class="t">Validate the change</div>
+        <div class="task">quality<div class="bar"><i data-fill="4.3,5.6"></i></div></div>
+        <div class="task">security<div class="bar"><i data-fill="4.3,6.0"></i></div></div>
+        <div class="task">testing<div class="bar"><i data-fill="4.3,5.4"></i></div></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="card note" data-at="5.0"><b>Optional</b> nodes (RAG, graph) degrade gracefully. <b>Required</b> nodes fail the run, and Kafka retries it.</div>
+    </div>
+  </div>
+
+  <!-- 7. Verify -->
+  <div class="scene" id="s7">
+    <h2 data-at="0"><span class="n">06</span>Find, then verify</h2>
+    <div class="sub" data-at="0.2">A second, independent model call judges every finding. That keeps false positives out of your PR.</div>
+    <div class="card ftable" data-at="0.4">
+      <div class="frow" data-at="0.6"><span class="sevcell"><span class="pill sev-high">HIGH</span></span><span class="mono" style="font-size:14px;color:var(--muted)">security</span>
+        <span class="txt">JWT algorithm falls back to <span class="mono">"none"</span>, so unsigned tokens are accepted</span>
+        <span data-at="2.0"><span class="pill v-ok">✓ confirmed</span></span></div>
+      <div class="frow" data-at="0.8" data-strike="2.9"><span class="sevcell"><span class="pill sev-med">MED</span></span><span class="mono" style="font-size:14px;color:var(--muted)">security</span>
+        <span class="txt">Possible SQL injection in token.ts</span>
+        <span data-at="2.6"><span class="pill v-no">✕ rejected</span></span></div>
+      <div class="frow" data-at="1.0"><span class="sevcell"><span class="pill sev-med" style="white-space:nowrap">MED<span data-at="3.5"> → LOW</span></span></span><span class="mono" style="font-size:14px;color:var(--muted)">quality</span>
+        <span class="txt">Env var read at import time, not validated in config</span>
+        <span data-at="3.3"><span class="pill v-un">? uncertain</span></span></div>
+      <div class="frow" data-at="1.2"><span class="sevcell"><span class="pill sev-low">LOW</span></span><span class="mono" style="font-size:14px;color:var(--muted)">testing</span>
+        <span class="txt">No test covers the signing algorithm</span>
+        <span data-at="3.8"><span class="pill v-ok">✓ confirmed</span></span></div>
+    </div>
+    <div class="notes">
+      <div class="card note" data-at="4.4"><b>Rejected</b> are dropped · <b>uncertain</b> drop one severity · only <b>confirmed</b> can fail the Check Run</div>
+    </div>
+  </div>
+
+  <!-- 8. Result -->
+  <div class="scene" id="s8">
+    <h2 data-at="0"><span class="n">07</span>Results land on the pull request</h2>
+    <div class="res">
+      <div class="card cmt" data-at="0.4">
+        <div class="diff">
+          <div class="fh">src/utils/token.ts</div>
+          <div class="ln add">+ const ALG = process.env.JWT_ALG ?? "none";</div>
+        </div>
+        <div class="bubble" data-at="1.0">
+          <div class="who">codeguard-ai <span>bot · just now</span></div>
+          <span class="pill sev-high">HIGH · security</span>
+          <p style="margin-top:8px">Falling back to <code>"none"</code> disables signature checks. <code>verifyJWT.ts</code> trusts this value, so anyone can forge a session.</p>
+          <p style="margin-top:6px;color:#a9f0cf">Suggestion: default to <code>"RS256"</code> and validate <code>JWT_ALG</code> in the env schema.</p>
+        </div>
+      </div>
+      <div class="side">
+        <div class="card check" data-at="1.8">
+          <div class="row"><span class="x">✕</span>CodeGuard AI: failing</div>
+          <div class="d">1 confirmed high-severity issue · 1 low · 1 rejected by verifier</div>
+          <div class="merge" data-at="2.6">Merging is blocked. Required check “CodeGuard AI” failed.</div>
+        </div>
+        <div class="card score" data-at="3.2">
+          <svg class="ring" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="42" stroke="#263049" stroke-width="10" fill="none"/>
+            <circle id="ringArc" cx="50" cy="50" r="42" stroke="#ffb84d" stroke-width="10" fill="none"
+              stroke-linecap="round" stroke-dasharray="0 264" transform="rotate(-90 50 50)"/>
+            <text id="scoreNum" x="50" y="58" text-anchor="middle" fill="#e6ebf5" font-size="24" font-family="Segoe UI" font-weight="700">0</text>
+          </svg>
+          <div class="big"><b>Review score</b><br>Saved to the dashboard with<br>trends per repo and category</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. Outro -->
+  <div class="scene" id="s9">
+    <div class="logo" data-at="0.1">🛡️ CodeGuard <span>AI</span></div>
+    <div class="tag" data-at="0.5">Webhook → Kafka → graph + RAG → staged LLM review → verified PR feedback</div>
+    <div class="chips" data-at="1.0">
+      <span class="chip">Next.js 16</span><span class="chip">Kafka (KRaft)</span><span class="chip">Neon Postgres</span><span class="chip">pgvector</span>
+      <span class="chip">Drizzle</span><span class="chip">Zod</span><span class="chip">Clerk</span><span class="chip">Vitest</span><span class="chip">Docker</span><span class="chip">GitHub Actions</span>
+    </div>
+    <div class="url" data-at="1.6">github.com/GOURAVSINGH19/Codeguard-Ai</div>
+  </div>
+
+  <div id="caption"><span id="capstep"></span><div id="captext"></div></div>
+  <div id="progress"></div>
+</div>
+
+<script>
+const SCENES = [
+  { id: "s1", dur: 4.5, cap: "CodeGuard AI reviews GitHub pull requests for security, bugs, performance and style." },
+  { id: "s2", dur: 5.5, cap: "A developer opens a PR. This one-line change quietly lets JWTs fall back to the \"none\" algorithm." },
+  { id: "s3", dur: 6.5, cap: "GitHub sends a webhook. It's HMAC-verified, saved to an outbox table, then published to Kafka, so no event is lost." },
+  { id: "s4", dur: 6.5, cap: "A worker builds the repo's import graph. BFS from the changed file finds the blast radius: the files this change can break." },
+  { id: "s5", dur: 6.0, cap: "RAG: pgvector finds code in this repo that's similar to the diff, so the model reviews against your real patterns." },
+  { id: "s6", dur: 7.0, cap: "Three stages: understand the change, assess the risk, then run quality, security and testing reviewers in parallel." },
+  { id: "s7", dur: 6.0, cap: "An independent verifier pass drops false positives. Only confirmed issues can fail the check." },
+  { id: "s8", dur: 6.5, cap: "Findings appear as inline PR comments, plus a Check Run that blocks the merge until the issue is fixed." },
+  { id: "s9", dur: 4.5, cap: "" },
+];
+let acc = 0;
+for (const s of SCENES) { s.start = acc; acc += s.dur; s.el = document.getElementById(s.id); }
+const TOTAL = acc;
+window.TOTAL = TOTAL;
+
+const clamp = (x) => Math.min(1, Math.max(0, x));
+const ease = (x) => { x = clamp(x); return x < .5 ? 2*x*x : 1 - Math.pow(-2*x + 2, 2) / 2; };
+
+// fake embedding bars
+const vec = document.getElementById("vec");
+for (let i = 0; i < 18; i++) { const b = document.createElement("i"); b.dataset.h = 12 + Math.abs(Math.sin(i * 2.3)) * 46; vec.appendChild(b); }
+
+function render(t) {
+  const cur = SCENES.find((s) => t >= s.start && t < s.start + s.dur) || SCENES[SCENES.length - 1];
+  for (const s of SCENES) {
+    if (s !== cur) { s.el.style.display = "none"; continue; }
+    const l = t - s.start;
+    s.el.style.display = "flex";
+    s.el.style.opacity = Math.min(ease(l / 0.4), s.id === "s9" ? 1 : ease((s.dur - l) / 0.4));
+
+    s.el.querySelectorAll("[data-at]").forEach((el) => {
+      const a = ease((l - parseFloat(el.dataset.at)) / 0.45);
+      const base = el.getAttribute("opacity") ? parseFloat(el.getAttribute("opacity")) : 1;
+      el.style.opacity = a * base;
+      if (!(el instanceof SVGElement)) el.style.transform = `translateY(${(1 - a) * 14}px)`;
+    });
+    s.el.querySelectorAll("[data-fill]").forEach((el) => {
+      const [a, b] = el.dataset.fill.split(",").map(Number);
+      el.style.width = ease((l - a) / (b - a)) * 100 + "%";
+    });
+    s.el.querySelectorAll("[data-strike]").forEach((el) => {
+      el.classList.toggle("struck", l >= parseFloat(el.dataset.strike));
+    });
+
+    if (s.id === "s3") {
+      const nodes = [...s.el.querySelectorAll(".node")];
+      const flow = document.getElementById("flow3").getBoundingClientRect();
+      const pts = nodes.map((n) => { const r = n.getBoundingClientRect(); return r.left - flow.left + r.width / 2 - 7; });
+      const p = clamp((l - 0.6) / 2.6) * (pts.length - 1);
+      const i = Math.min(Math.floor(p), pts.length - 2), f = ease(p - i);
+      const pk = document.getElementById("pk3");
+      pk.style.left = pts[i] + (pts[i + 1] - pts[i]) * f + "px";
+      pk.style.opacity = l > 0.5 ? 1 : 0;
+    }
+    if (s.id === "s5") {
+      [...vec.children].forEach((b, i) => { b.style.height = ease((l - 1.4 - i * 0.04) / 0.4) * b.dataset.h + "px"; });
+    }
+    if (s.id === "s8") {
+      const v = Math.round(ease((l - 3.4) / 1.4) * 58);
+      document.getElementById("scoreNum").textContent = v;
+      document.getElementById("ringArc").setAttribute("stroke-dasharray", `${(v / 100) * 264} 264`);
+    }
+  }
+
+  const steps = { s2: "01", s3: "02", s4: "03", s5: "04", s6: "05", s7: "06", s8: "07" };
+  document.getElementById("capstep").textContent = steps[cur.id] ? "STEP " + steps[cur.id] : "";
+  const cap = document.getElementById("captext");
+  cap.textContent = cur.cap;
+  const cl = t - cur.start;
+  document.getElementById("caption").style.opacity = cur.cap ? Math.min(ease((cl - 0.3) / 0.4), ease((cur.dur - cl) / 0.3)) : 0;
+  document.getElementById("progress").style.width = (t / TOTAL) * 100 + "%";
+}
+window.render = render;
+
+// Live playback when opened directly in a browser (the recorder drives render() itself).
+if (!location.search.includes("record")) {
+  const t0 = performance.now();
+  (function loop() { render(((performance.now() - t0) / 1000) % TOTAL); requestAnimationFrame(loop); })();
+} else {
+  render(0);
+}
+</script>
+</body>
+</html>

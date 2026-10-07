@@ -1,406 +1,341 @@
+<div align="center">
+
 # 🛡️ CodeGuard AI
 
-An AI-powered code review platform that automatically analyses GitHub Pull Requests
-and code snippets for security vulnerabilities, bugs, performance issues, and
-style problems — posts inline review comments and a merge-gating Check Run, powered
-by a pluggable LLM (Groq or OpenAI), Kafka, pgvector RAG, dependency graph analysis,
-and a clean service-layer architecture.
+**An AI code reviewer for GitHub pull requests that knows *how far* a change reaches before it judges it.**
 
-> **Built as an SDE-1 portfolio project** demonstrating: TypeScript monorepo,
-> service-layer design patterns, Kafka event streaming, RAG pipeline, graph
-> algorithms (BFS blast-radius), vector search, and CI/CD.
+CodeGuard AI reviews every pull request in stages. It maps the blast radius of the change
+through the repo's import graph, pulls related code in with pgvector RAG, runs parallel
+quality / security / testing reviewers, has a second model check every finding, and then
+posts inline comments plus a Check Run that can block the merge.
 
----
+[![CI](https://github.com/GOURAVSINGH19/Codeguard-Ai/actions/workflows/ci.yml/badge.svg)](https://github.com/GOURAVSINGH19/Codeguard-Ai/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![Kafka](https://img.shields.io/badge/Apache%20Kafka-event%20driven-231F20?logo=apachekafka&logoColor=white)
+![Postgres](https://img.shields.io/badge/Postgres-pgvector-4169E1?logo=postgresql&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)
 
-## Architecture
+[**▶ Watch the demo**](#-demo) · [Architecture](#-architecture) · [How a review works](#-how-a-review-works) · [Engineering decisions](#-engineering-decisions) · [Run it locally](#-run-it-locally)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Browser (Next.js UI)                        │
-│         ReviewerDashboard  ·  PRReviewer  ·  /reviews/[id]         │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ HTTP (fetch)
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                    Next.js API Routes  (thin)                        │
-│  /api/review  /api/reviews  /api/github/review  /api/github/repos   │
-│  /api/github/comment  /api/webhooks/github                          │
-│                                                                      │
-│  Auth: Clerk  ·  Validation: Zod  ·  Zero business logic here       │
-└───┬──────────────────┬────────────────────┬───────────────┬─────────┘
-    │                  │                    │               │
-    ▼                  ▼                    ▼               ▼
-┌───────────┐  ┌───────────────┐  ┌──────────────────┐  ┌──────────────┐
-│   AI      │  │    GitHub     │  │    Review        │  │    User      │
-│  Review   │  │   Service     │  │  Persistence     │  │   Service    │
-│  Service  │  │               │  │    Service       │  │              │
-│           │  │ listRepos()   │  │                  │  │ syncUser()   │
-│ review    │  │ listOpenPRs() │  │ saveSnippet()    │  └──────────────┘
-│ Snippet() │  │ getPRDetail() │  │ ensureRepo()     │
-│ reviewPR  │  │ postComment() │  │ ensurePR()       │
-│ Diff()    │  └───────┬───────┘  │ completePR()     │
-└─────┬─────┘          │          │ getUserReviews()  │
-      │                │          └────────┬──────────┘
-      │ Groq API       │ GitHub API        │ Drizzle ORM
-      ▼                ▼                   ▼
-┌──────────────┐  ┌──────────┐  ┌──────────────────────┐
-│  Groq LLM    │  │  GitHub  │  │   Neon PostgreSQL     │
-│  or OpenAI   │  │   REST   │  │   + pgvector (RAG)    │
-│  70B via API │  │   API    │  │                        │
-└──────────────┘  └──────────┘  └──────────────────────┘
-
-        ─────────── Kafka Event Flow ───────────
-
-GitHub Webhook ──► POST /api/webhooks/github
-                        │ HMAC SHA-256 verify (timingSafeEqual)
-                        │ save to webhook_events table
-                        │ publish → codeguard.webhook.received
-                        ▼
-              ┌──────────────────────┐
-              │  Kafka (cp-kafka)    │
-              │                      │
-              │  webhook.received    │
-              │  review.requested    │
-              │  review.completed    │
-              └──────────┬───────────┘
-                         │ consume
-              ┌──────────▼────────────────────────────────┐
-              │               apps/workers                  │
-              │                                             │
-              │  1. webhookProcessor                        │
-              │     filters PR events (opened/synchronize) │
-              │     publishes review.requested              │
-              │                                             │
-              │  2. reviewProcessor                         │
-              │     fetches PR diff from GitHub API         │
-              │                                             │
-              │  3. PRDiffSelector  (graph-aware)           │
-              │     loads code_chunks from DB               │
-              │     builds DependencyGraph                  │
-              │       nodes = files                         │
-              │       edges = import relationships          │
-              │     BFS blast radius from changed files     │
-              │     ranks files by risk score               │
-              │     fills 12k char budget: riskiest first   │
-              │                                             │
-              │  4. RAGService  (vector search)             │
-              │     embeds selected diff → query vector     │
-              │     pgvector cosine search (IVFFlat index)  │
-              │     returns 5 most similar code chunks      │
-              │     injects as "Codebase Context"           │
-              │                                             │
-              │  5. Groq AI call                            │
-              │     system: constraints + RAG context       │
-              │     user: graph-selected diff               │
-              │     → Zod validated ReviewOutput            │
-              │                                             │
-              │  6. Persist to DB + post GitHub comment     │
-              │  7. publish review.completed                │
-              │                                             │
-              │  8. fullIndexer (codeguard.index.full)      │
-              │     on install + backfill: embed all files  │
-              │     stores vectors in code_chunks table     │
-              └─────────────────────────────────────────────┘
-```
+</div>
 
 ---
 
-## What Makes This Project Different
+## ✨ Highlights
 
-### 1. Graph-Aware Diff Selection
-Instead of blindly truncating the diff at 12,000 characters, the worker builds a
-**dependency graph** from import relationships in the codebase. When a PR changes
-`src/utils/token.ts`, BFS traversal through reverse edges finds every file that
-imports it — `auth.ts` → `middleware.ts` → `routes/api/users.ts`. Those files are
-ranked highest for the AI review budget, so a 1-line change to a widely-imported
-utility scores higher than a 200-line change to an isolated test file.
+- **Event-driven backend.** GitHub webhooks are verified, saved to an outbox table and handed to Kafka. The HTTP handler returns right away, and the AI work happens in separate worker processes.
+- **Blast-radius analysis.** Tree-sitter builds an import graph for the repo, and BFS over reverse edges finds every file affected by a change. A one-line edit to a widely imported utility counts for more than 200 lines in an isolated test.
+- **RAG on the actual codebase.** Code is chunked by AST, embedded, and searched with pgvector. Reviews can say *"verifyJWT.ts trusts this value"* instead of giving generic advice.
+- **A 25-step staged pipeline.** Change analysis, then risk assessment, then three reviewers in parallel, then independent verification, scorecard and policy decision.
+- **Built to fail safely.** Transactional outbox, idempotency keys, dead-letter topics, retries with backoff, recovery sweepers, and Zod validation on every model response.
+- **Works with any model provider.** Groq, OpenAI or Anthropic, chosen with one env var. Each provider only ever sees its own key.
+
+---
+
+## 🎬 Demo
+
+<p align="center">
+  <img src="docs/demo/codeguard-demo.gif" alt="CodeGuard AI walkthrough: a PR is opened, verified, analysed with graph + RAG context, reviewed in stages, verified, and blocked by a failing Check Run" width="100%">
+</p>
+
+<p align="center"><a href="docs/demo/codeguard-demo.mp4">▶ Watch in full quality (MP4, 53s)</a></p>
+
+The video follows one pull request: a one-line change that looks harmless but makes
+JWT verification accept **unsigned tokens**.
+
+```diff
+- const ALG = "RS256";
++ const ALG = process.env.JWT_ALG ?? "none";
+```
+
+CodeGuard finds that `auth/verifyJWT.ts` and `middleware/csrf.ts` depend on this file,
+flags the change as a critical security issue with a suggested fix, and fails the
+**CodeGuard AI** Check Run so the PR can't be merged.
+
+> **About hosting:** the web app is deployed on Vercel. The Kafka broker and workers
+> aren't hosted around the clock (an always-on Kafka costs money), so the video shows
+> the full flow end to end. Anyone can run the whole system with one
+> `docker compose` command. See [Run it locally](#-run-it-locally).
+
+---
+
+## 🏗 Architecture
+
+```mermaid
+flowchart LR
+    GH[GitHub<br/>PR opened / pushed] -- webhook --> WH
+
+    subgraph Vercel["Next.js 16 · Vercel"]
+        UI[Dashboard<br/>live review progress]
+        WH["/api/webhooks/github<br/>HMAC verify · dedupe"]
+        API["/api/review · /api/reviews"]
+    end
+
+    WH -- 1. save first --> OB[(webhook_events<br/>outbox)]
+    API --> PG
+
+    subgraph Data["Neon Postgres"]
+        OB
+        PG[(reviews · findings<br/>repos · users)]
+        VEC[(code_chunks<br/>pgvector)]
+    end
+
+    OB -- 2. publish / sweep --> K{{Kafka<br/>+ DLQ topics}}
+
+    subgraph Workers["Workers · Docker"]
+        WP[webhookProcessor]
+        RP[reviewProcessor<br/>25-step pipeline]
+        IX[full / incremental<br/>indexer]
+        SW[outbox & recovery<br/>sweepers]
+    end
+
+    K --> WP --> K
+    K --> RP
+    K --> IX
+    SW --> K
+    IX -- embeddings --> VEC
+    RP -- RAG search --> VEC
+    RP -- LLM calls --> LLM[Groq · OpenAI · Anthropic]
+    RP -- results --> PG
+    RP -- inline comments + Check Run --> GH
+    PG --> UI
+```
+
+**Kafka topics:** `codeguard.webhook.received` → `codeguard.review.requested` → `codeguard.review.completed`,
+plus `codeguard.index.full` and `codeguard.index.incremental`. Every consumer topic has a `.dlq` partner.
+
+---
+
+## 🔬 How a review works
+
+The review is a typed pipeline of nodes ([`apps/workers/src/pipeline/reviewPipeline.ts`](apps/workers/src/pipeline/reviewPipeline.ts)).
+**Required** nodes fail the run, and Kafka retries it. **Optional** nodes (context, intent,
+graph, individual reviewers) are skipped with a note when they fail, so one flaky call
+doesn't sink the whole review.
+
+```mermaid
+flowchart TD
+    A["Prepare<br/>validate event · snapshot repo · PR + business context<br/>detect tech stack · resolve skills · context packs · software graph"] --> S1
+    S1["Stage 1 · What changed?<br/>committer ∥ intent alignment ∥ volume ∥ cohesion"] --> S2
+    S2["Stage 2 · How risky is it?<br/>blast radius ∥ criticality → risk assessment"] --> S3
+    S3["Stage 3 · Review<br/>quality ∥ security ∥ testing"] --> F
+    F["Aggregate → deduplicate → plan verification"] --> V
+    V["Independent verify<br/>second model judges each finding"] --> D
+    D["Scorecard → policy (.codeguard.yml) → assurance decision"] --> P
+    P["Publish<br/>inline comments · Check Run · dashboard"]
+```
+
+| Step | What happens | Code |
+| --- | --- | --- |
+| **Ingest** | HMAC SHA-256 check with `timingSafeEqual`, de-duplication by `X-GitHub-Delivery`, saved to the outbox *before* publishing. A sweeper republishes anything Kafka missed. | [`apps/web/src/app/api/webhooks`](apps/web/src/app/api/webhooks), [`webhookOutboxSweeper.ts`](apps/workers/src/jobs/webhookOutboxSweeper.ts) |
+| **Blast radius** | Tree-sitter extracts imports (TS/JS, Python, Go, Java, Rust, C++). BFS over reverse edges ranks affected files, then the riskiest complete patches fill the model's budget. | [`DependencyGraph.ts`](apps/workers/src/analyzers/DependencyGraph.ts), [`PRDiffSelector.ts`](apps/workers/src/analyzers/PRDiffSelector.ts) |
+| **RAG** | AST-aware chunks are embedded with `text-embedding-3-small`. The diff is the query, and the nearest chunks go into the prompt as codebase context. | [`ASTChunker.ts`](apps/workers/src/analyzers/ASTChunker.ts), [`RAGService.ts`](apps/workers/src/rag/RAGService.ts) |
+| **Staged review** | Three stages of reviewers, run in parallel within each stage. Every response is parsed with Zod and gets one repair attempt before it's rejected. | [`pipeline/nodes/stages.ts`](apps/workers/src/pipeline/nodes/stages.ts), [`review-engine/src/assurance`](packages/review-engine/src/assurance) |
+| **Verify** | A separate model call marks each finding *confirmed*, *uncertain* (dropped one severity) or *rejected* (removed). Only confirmed findings can fail the check. | [`verify.ts`](packages/review-engine/src/verify.ts), [`finalize.ts`](apps/workers/src/pipeline/nodes/finalize.ts) |
+| **Publish** | Inline PR comments with suggested fixes, a pass/fail Check Run, and a dashboard where progress streams live and findings can be resolved or dismissed. | [`github.ts`](packages/review-engine/src/github.ts), [`apps/web/src/app/reviews`](apps/web/src/app/reviews) |
+
+---
+
+## 🧠 Engineering decisions
+
+<details open>
+<summary><b>Why Kafka plus a transactional outbox, not a direct API call?</b></summary>
+
+An AI review takes seconds to minutes, and GitHub expects a webhook response within 10 seconds.
+The webhook handler only verifies, saves and publishes. If Kafka is down at that moment, the
+row is still in `webhook_events`, and the worker's sweeper publishes it later. **No delivery is
+lost.** Messages are keyed by `owner/repo#number`, so pushes to the same PR are processed in
+order. Because of the outbox, the web app doesn't even need to reach Kafka: with
+`KAFKA_PUBLISH_FROM_WEB=false` it only writes to Postgres, and the workers publish.
+</details>
+
+<details>
+<summary><b>Why a dependency graph instead of truncating the diff?</b></summary>
+
+The naive approach is `diff.slice(0, 12_000)`, which cuts at an arbitrary point, often mid-function.
+Ranking files by blast radius means the model's limited context goes to the code most
+likely to break. Unrelated files like `components/Button.tsx` are never sent.
 
 ```
 Changed: utils/token.ts (+1 line)
-
-BFS blast radius:
-  depth 0: utils/token.ts          ← directly changed
-  depth 1: auth/verifyJWT.ts       ← imports token.ts  (HIGH RISK)
-  depth 1: middleware/csrf.ts      ← imports token.ts  (HIGH RISK)
-  depth 2: routes/api/users.ts     ← imports verifyJWT (MEDIUM RISK)
-  depth 3: app.ts                  ← (excluded, budget full)
-
-Unrelated: components/Button.tsx   ← NEVER included
+  depth 1  auth/verifyJWT.ts      ← imports token.ts    HIGH
+  depth 1  middleware/csrf.ts     ← imports token.ts    HIGH
+  depth 2  routes/api/users.ts    ← imports verifyJWT   MEDIUM
+  depth 3  app.ts                 ← budget full, excluded
 ```
+</details>
 
-### 2. RAG-Augmented Reviews
-The AI doesn't just see the diff — it sees **similar code from the actual
-repository** via pgvector semantic search. The PR diff is embedded to a vector,
-and the 5 nearest-neighbour code chunks are injected into the prompt as context.
-The LLM can now say "this conflicts with the existing pattern in `src/auth/utils.ts`"
-rather than just "consider using parameterized queries."
+<details>
+<summary><b>Why a second "verifier" model?</b></summary>
 
-### 3. Zod as the AI Trust Boundary
-Every model response — in the web app AND the workers — is parsed through
-`ReviewOutputSchema` (in `@codeguard/review-engine`) before touching the DB.
-Invalid output gets one repair attempt, then the review is marked failed.
-If the model hallucinates `severity: "catastrophic"` or `score: 99`, the validation
-fails cleanly — no corrupt data persists, the review status is marked `"failed"`.
+A reviewer told to be thorough over-reports, and false positives quickly teach developers
+to ignore the bot. An independent verifier sees the same diff plus the numbered findings and
+judges each one. If the verifier itself fails, the review keeps the unverified findings rather
+than losing the review.
+</details>
 
-### 4. Two-Stage Review: Find, then Verify
-The first model call is asked to be thorough, so it over-reports. A second,
-independent call (the **verifier**) gets the same diff plus the numbered findings
-and judges each one: `confirmed`, `uncertain` or `rejected`. Rejected findings are
-dropped, uncertain ones are kept one severity lower, so **only confirmed findings
-can fail the Check Run**. If the verifier itself fails, the review keeps the
-unverified findings rather than losing the review. The PR summary shows the counts.
+<details>
+<summary><b>Why treat Zod as the AI trust boundary?</b></summary>
 
-### 5. Service Layer Architecture
-All business logic was extracted from fat route handlers into four dedicated service
-classes. God-object score went from 90% → 30%. Every API route is ≤20 lines:
-parse → auth check → one service call → return response.
+Model output is untrusted input. Every response goes through a schema before it reaches the
+database. A hallucinated `severity: "catastrophic"` or `score: 99` fails cleanly, gets one
+repair attempt, and otherwise marks the run failed. Corrupt data never gets saved.
+</details>
 
----
+<details>
+<summary><b>Why a service layer?</b></summary>
 
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Frontend | Next.js 16 App Router, React 19, Tailwind v4 | SSR + collocated API routes |
-| Auth | Clerk (GitHub OAuth) | GitHub token access without storing creds |
-| API | Next.js Route Handlers + Zod | Type-safe REST, validated I/O |
-| Service Layer | TypeScript classes | Separation of concerns, testability |
-| AI Reviews | `@codeguard/review-engine` → Groq (`openai/gpt-oss-120b`) or OpenAI | One engine for web + workers; provider set by `LLM_PROVIDER` |
-| RAG Embeddings | OpenAI text-embedding-3-small | 1536-dim vectors, best quality/cost |
-| Vector Search | pgvector (Neon PostgreSQL) | No separate vector DB needed |
-| Graph Analysis | Custom BFS DependencyGraph | Blast-radius aware diff selection |
-| Message Queue | Kafka (Confluent cp-kafka local, hosted Kafka in prod) | Async webhook processing |
-| Database | Neon PostgreSQL + Drizzle ORM | Serverless Postgres, type-safe |
-| GitHub API | Octokit v5 | PR diff fetch, inline comment posting |
-| Tests | Vitest (71 tests) | Fast, ESM-native |
-| CI/CD | GitHub Actions | Parallel type check + lint + test + build |
-| Monorepo | pnpm workspaces | Shared packages, zero duplication |
+Route handlers used to mix auth, AI calls, database writes and GitHub calls. Now every route is
+roughly *parse → auth → one service call → respond*, and the logic lives in testable classes
+(`ReviewService`, `GitHubService`, `ReviewPersistenceService`, `UserService`).
+</details>
 
 ---
 
-## Project Structure
+## 🔐 Reliability & security
+
+| Concern | How it's handled |
+| --- | --- |
+| Duplicate reviews | A partial unique index allows one live review per (PR, head SHA, requester). Webhook deliveries are de-duplicated. |
+| Lost events | Transactional outbox and sweeper. Stuck reviews are picked up again by the recovery sweeper. |
+| Poison messages | Invalid messages go straight to `*.dlq`. Failing ones go there after 3 attempts with backoff. Consumers heartbeat during long LLM calls. |
+| Re-reviews | On `synchronize`, only the commits since the last review are sent. |
+| Prompt injection | PR text and code go in the user message inside a random delimiter, and model output can't @-mention people. |
+| Weakening the review from inside a PR | `.codeguard.yml` is read from the PR's **base** commit, never its head. |
+| GitHub App installs | Linked only after the CSRF `state` and the user's own access to the installation are verified. |
+| Everything else | Webhooks fail closed (unsigned ones are rejected), Kafka TLS is verified by default, API errors are generic, reviews are rate-limited per user, and gitleaks runs in CI. |
+
+---
+
+## 🧰 Tech stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 16 (App Router), React 19, Tailwind CSS v4, light & dark themes |
+| Auth | Clerk (GitHub OAuth) + GitHub App installation tokens |
+| Messaging | Apache Kafka (KafkaJS) — KRaft, dead-letter topics |
+| Workers | Node 22, TypeScript, Docker |
+| Database | Neon Postgres, Drizzle ORM, pgvector |
+| Code analysis | Tree-sitter (7 languages), BFS dependency graph |
+| AI | Groq `openai/gpt-oss-120b` / OpenAI / Anthropic · OpenAI embeddings |
+| Validation | Zod, end to end (env, API, events, model output) |
+| Quality | Vitest (169 tests), strict typecheck, ESLint, gitleaks, `pnpm audit`, Dependabot |
+| CI | GitHub Actions: typecheck ∥ lint ∥ test ∥ migrations & audit ∥ secret scan → build |
+
+---
+
+## 📁 Project structure
 
 ```
 codeguard-ai/
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # Parallel CI: typecheck + lint + test + build
 ├── apps/
-│   ├── web/                    # Next.js frontend + API routes
+│   ├── web/                       # Next.js UI + thin API routes
 │   │   └── src/
-│   │       ├── app/api/        # Thin route handlers (auth + delegate only)
-│   │       │   ├── review/     # Snippet review
-│   │       │   ├── reviews/    # History + detail
-│   │       │   ├── github/     # Repos, PRs, review, comment
-│   │       │   └── webhooks/   # GitHub webhook receiver (HMAC verified)
-│   │       ├── services/       # Business logic
-│   │       │   ├── ReviewService.ts        # Starts async reviews (202 + poll), rate limit
-│   │       │   ├── GitHubService.ts        # User-token Octokit calls
-│   │       │   ├── ReviewPersistenceService.ts  # All DB reads/writes
-│   │       │   └── UserService.ts          # Clerk→Neon user sync
-│   │       └── components/     # ReviewerDashboard, PRReviewer
-│   └── workers/                # Kafka consumer workers
+│   │       ├── app/api/           # webhooks · review · reviews (+ live events) · github
+│   │       ├── services/          # business logic (Review, GitHub, Persistence, User)
+│   │       └── components/        # dashboard, PR reviewer
+│   └── workers/                   # Kafka consumers (Docker image)
 │       └── src/
-│           ├── ai/
-│           │   └── EmbeddingService.ts     # OpenAI text-embedding-3-small
-│           ├── analyzers/
-│           │   ├── CodeChunker.ts          # Sliding window file splitter
-│           │   ├── DependencyGraph.ts      # BFS import graph
-│           │   ├── ImportExtractor.ts      # Regex import parser
-│           │   └── PRDiffSelector.ts       # Graph-aware diff budget selector
-│           ├── jobs/
-│           │   ├── webhookProcessor.ts     # webhook.received → review.requested
-│           │   ├── reviewProcessor.ts      # review.requested → AI → DB → GitHub
-│           │   └── indexRepository.ts      # Bulk embed all repo files
-│           ├── queue/
-│           │   └── kafkaClient.ts          # Producer/consumer management
-│           └── rag/
-│               └── RAGService.ts           # pgvector similarity search
-└── packages/
-    ├── config/                 # Zod-validated env (fail fast, one place)
-    ├── db/                     # Drizzle schema (8 tables), migrations, Neon client
-    ├── review-engine/          # Prompts, LLM providers, diff annotation, validation,
-    │                           #   .codeguard.yml, inline comments + Check Run
-    ├── types/                  # Shared Zod schemas (ReviewInput/Output)
-    └── kafka/                  # Topics (+ DLQs), event schemas, shared producer
+│           ├── pipeline/          # 25-step staged review (prepare → stages → finalize)
+│           ├── analyzers/         # Tree-sitter imports, AST chunker, dependency graph
+│           ├── jobs/              # webhook / review / indexers / outbox & recovery sweepers
+│           ├── rag/               # pgvector similarity search
+│           └── queue/             # consumer with retries + DLQ
+├── packages/
+│   ├── review-engine/             # prompts, providers, staged reviewers, verifier, GitHub output
+│   ├── kafka/                     # topics, event schemas, shared producer
+│   ├── db/                        # Drizzle schema (8 tables) + migrations
+│   ├── config/                    # Zod-validated env, one source of truth
+│   └── types/                     # shared Zod schemas
+├── infra/kafka/                   # Kafka image for a private cloud service
+├── docs/demo/                     # demo video + the HTML it's recorded from
+└── docker-compose.yml             # Kafka + worker (+ Redis)
 ```
 
 ---
 
-## Key Engineering Decisions
+## 🚀 Run it locally
 
-**1. Service layer over fat route handlers**
-Before: every route handler owned auth, AI calls, DB writes, and GitHub API calls
-in one function (90% god-object score). After: four service classes, each with a
-single responsibility. Evolvability cost dropped from 3.1 to 1.3 components per
-new feature. See [`architecture_selection.md`](.kiro/specs/codeguard-ai-high-level-architecture/architecture_selection.md).
+**You need:** Node 22+, pnpm 10+, Docker, and free accounts on [Clerk](https://clerk.com),
+[Neon](https://neon.tech) and [Groq](https://console.groq.com), plus an
+[OpenAI](https://platform.openai.com) key for embeddings and a GitHub App.
 
-**2. Graph-aware diff selection over naive truncation**
-The old approach: `.slice(0, 12_000)` — random cut, often mid-function.
-The new approach: `DependencyGraph` + BFS blast radius → `PRDiffSelector` fills
-the budget with complete file patches in risk order. A 1-line change to a
-widely-imported file scores higher than a 200-line isolated change.
-
-**3. Kafka for async webhook processing**
-GitHub webhooks return 200 immediately while the worker processes independently.
-Webhook delivery is never blocked by 2–8 second AI latency. Kafka's consumer
-groups allow future services (notifications, analytics) to react to the same
-events without changing the producer.
-
-**4. RAG for codebase-aware reviews**
-Without RAG, the AI sees only the diff. With RAG, it sees semantically similar
-code from the actual repository (pgvector cosine search). This enables
-repo-specific feedback rather than generic best-practice suggestions.
-
-**5. Zod as the AI trust boundary**
-Everything from Groq is untrusted until `ReviewOutputSchema.parse()` succeeds.
-Prevents corrupt enum values, out-of-range scores, and missing required fields
-from reaching the database.
-
----
-
-## Getting Started
-
-### Prerequisites
-- Node.js 20+, pnpm 10+
-- Docker Desktop (for Kafka + Redis)
-- Clerk account (free) — [clerk.com](https://clerk.com)
-- Neon PostgreSQL database (free) — [neon.tech](https://neon.tech)
-- Groq API key (free) — [console.groq.com](https://console.groq.com)
-- OpenAI API key (for embeddings) — [platform.openai.com](https://platform.openai.com)
-
-### 1. Clone and install
 ```bash
-git clone https://github.com/your-username/codeguard-ai
-cd codeguard-ai
+git clone https://github.com/GOURAVSINGH19/Codeguard-Ai.git
+cd Codeguard-Ai
 pnpm install
 ```
 
-### 2. Configure environment variables
+**1. Environment.** Copy [`.env.example`](.env.example) to `apps/web/.env.local` and `apps/workers/.env`,
+then fill them in. Every variable is validated at startup by [`packages/config/src/env.ts`](packages/config/src/env.ts).
 
-Copy [`.env.example`](.env.example) to `apps/web/.env.local` and `apps/workers/.env`
-and fill in the values. Every variable is validated at startup by
-[`packages/config/src/env.ts`](packages/config/src/env.ts).
+<details>
+<summary>GitHub App setup</summary>
 
-Key points:
-
-- `LLM_PROVIDER=groq|openai` — each provider only ever uses its own API key.
-- GitHub App: set the **Setup URL** to `https://<app>/api/github/app/callback` and
-  enable **"Request user authorization (OAuth) during installation"**, then set
-  `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`. The callback uses this to
-  verify the signed-in user really has access to the installation.
-- Grant the App **Pull requests: write** and **Checks: write** (for the Check Run).
-- `GITHUB_APP_WEBHOOK_SECRET` is required outside development — unsigned webhooks
-  are rejected.
+- Permissions: **Pull requests: write**, **Checks: write**, **Contents: read**.
+- Setup URL: `https://<your-app>/api/github/app/callback`, with **"Request user authorization (OAuth) during installation"** enabled.
+- Webhook URL: `https://<your-app>/api/webhooks/github`. `GITHUB_APP_WEBHOOK_SECRET` is required outside development.
 - Workers mint installation tokens from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`.
-  `GITHUB_TOKEN` is only honoured when `NODE_ENV` is not `production`.
+</details>
 
-### 3. Start infrastructure
+**2. Database.** Enable pgvector once in the Neon SQL console (`CREATE EXTENSION IF NOT EXISTS vector;`), then run:
+
 ```bash
-docker-compose up -d
-# Kafka: localhost:19092 (confluentinc/cp-kafka, KRaft)
-# Kafka UI → http://localhost:8080
-# Topics created automatically on first message
+pnpm db:migrate
 ```
 
-### 4. Run database migrations
+**3. Kafka and workers.** This starts a single-node Kafka (KRaft) and the worker container:
+
 ```bash
-pnpm db:migrate        # includes 0002: idempotency keys + install ownership
-# Also run in Neon SQL console:
-# CREATE EXTENSION IF NOT EXISTS vector;
+docker compose up -d --build kafka worker
 ```
 
-### 5. Start development servers
-```bash
-# Terminal 1 — Next.js web app
-pnpm dev:web          # http://localhost:3000
+**4. Web app.**
 
-# Terminal 2 — Kafka workers
-pnpm dev:worker       # starts webhookProcessor + reviewProcessor
+```bash
+pnpm dev:web
 ```
 
-### 6. Per-repository settings (`.codeguard.yml`)
+Open http://localhost:3000, install the GitHub App on a repo, and open a pull request.
 
-Optional file at the repository root. It is read from the PR's **base** commit,
-so a PR cannot weaken its own review.
+> To work on the workers with hot reload, skip the `worker` container and run
+> `pnpm --filter workers dev:local` (it connects to the compose Kafka on `localhost:19092`).
+
+**Tests:**
+
+```bash
+pnpm test
+```
+
+```bash
+pnpm typecheck
+```
+
+### Per-repo settings: `.codeguard.yml`
 
 ```yaml
-ignore:              # globs never sent to the model (lockfiles etc. are ignored by default)
+ignore:              # globs never sent to the model (lockfiles are ignored by default)
   - "docs/**"
-min_severity: low    # issues below this are not posted
-fail_on: critical    # Check Run fails at/above this severity ("never" = never fail)
+min_severity: low    # findings below this aren't posted
+fail_on: critical    # Check Run fails at or above this ("never" to never fail)
 instructions: |      # team conventions added to the prompt
   We return Result<T, E> instead of throwing.
 ```
 
-### 7. Run tests
-```bash
-pnpm test             # 133 tests, ~3 seconds
-pnpm typecheck        # every workspace package
-```
+---
+
+## 🗺 Roadmap
+
+- **Learning from feedback.** Use dismissed findings as team memory to suppress patterns a repo keeps rejecting.
+- **Evaluation set.** Real PRs with known bugs, to measure precision and recall across models and prompts.
+- **Jira / Linear intent check.** Compare the PR against the ticket it claims to implement.
+- **Fully self-hosted mode.** Docker Compose with a local model instead of a hosted LLM.
 
 ---
 
-## CI/CD Pipeline
+<div align="center">
 
-```
-PR opened
-    │
-    ├── Type Check (all packages)            ┐
-    ├── Lint (eslint)                        │
-    ├── Unit Tests (vitest)                  ├── run in PARALLEL
-    ├── Migrations & Audit (drizzle check,   │
-    │     schema drift, pnpm audit)          │
-    └── Secret Scan (gitleaks)               ┘
-                    │
-                    └── Build (next build + workers Docker image)
-                                  │
-                                  └── CodeGuard self-review (non-blocking)
-```
+Built by **[Gourav Singh](https://github.com/GOURAVSINGH19)**. If you have questions or feedback, open an issue.
 
-Dependabot keeps npm packages, GitHub Actions and the worker's base image current.
-
----
-
-## Reliability & Security
-
-- **Idempotent reviews** — one live review per (PR, head SHA, requester), enforced by
-  a partial unique index; webhook deliveries are de-duplicated by `X-GitHub-Delivery`.
-- **Outbox** — every webhook is stored before it is published; if Kafka is down the
-  worker's sweeper republishes it, so no delivery is lost.
-- **Dead-letter topics** — invalid messages go to `*.dlq` immediately; failing ones
-  after 3 attempts with backoff. Consumers heartbeat during long LLM calls.
-- **Per-PR ordering** — Kafka messages are keyed by `owner/repo#number`.
-- **Incremental re-review** — on `synchronize`, only commits since the last review are sent.
-- **Prompt-injection hardening** — PR text and code go in the user message inside a
-  random delimiter; model output can't @-mention people.
-- **Install verification** — GitHub App installs are linked only after `state` (CSRF)
-  and the user's own GitHub access to the installation are verified.
-- **Fail-closed webhooks, verified Kafka TLS, generic API errors, per-user rate limit**
-  (`REVIEW_RATE_LIMIT_PER_HOUR`).
-
----
-
-## Test Coverage
-
-| Suite | Tests | What's covered |
-|---|---|---|
-| `packages/types` | 23 | Zod schemas — enums, boundary scores, required fields |
-| `packages/config` | 7 | Provider key isolation, Kafka TLS defaults, private-key newlines |
-| `packages/review-engine` | 36 | Find → verify stage, diff line numbers, budget, file attribution, repair retry, prompt injection, retries, inline comments + fallbacks, `.codeguard.yml` |
-| `web/lib` | 9 | Webhook HMAC, fail-closed, delivery de-duplication, Kafka outage |
-| `web/ReviewService` | 4 | Same commit reviewed once, async completion, failure, rate limit |
-| `workers/webhookProcessor` | 11 | PR/push/install routing, drafts, auto-review toggle, default branch only |
-| `workers/consumer` | 5 | DLQ for bad messages, retries, permanent errors |
-| `workers/CodeChunker` / `RAGService` / `DependencyGraph` | 38 | Chunking, RAG formatting, BFS blast radius |
-| **Total** | **133** | |
-
----
-
-## What I Would Add With More Time
-
-- **Feedback loop** — 👍/👎 or "dismiss" on findings stored as team memory, to suppress
-  patterns a repository keeps rejecting
-- **Typed context engine** — budgeted, weighted, provenance-tagged context packs (see `PR/context_engine.md`)
-- **Multi-stage agents** — change / risk / validation stages with independent verification (see `PR/`)
-- **Jira / Linear intent check** and an **evaluation set** of real PRs with known bugs
-- **Self-hosted deploy** — Docker Compose with a local model instead of Groq
+</div>
