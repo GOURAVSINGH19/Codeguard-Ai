@@ -15,9 +15,6 @@ permissions:
   contents: read
 
 jobs:
-  # ════════════════════════════════════════════════════════════════════════════
-  # Type check every workspace package (web, workers, shared packages)
-  # ════════════════════════════════════════════════════════════════════════════
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
@@ -34,7 +31,6 @@ jobs:
       - name: Type check all packages
         run: pnpm typecheck
 
-  # ════════════════════════════════════════════════════════════════════════════
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -51,9 +47,7 @@ jobs:
       - name: Lint — web app
         run: pnpm --filter web lint
 
-  # ════════════════════════════════════════════════════════════════════════════
   # Unit tests — no real services needed (LLM, DB, Kafka and GitHub are mocked)
-  # ════════════════════════════════════════════════════════════════════════════
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -69,10 +63,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  # ════════════════════════════════════════════════════════════════════════════
   # Schema and migrations must agree; dependencies must be free of known
   # high-severity advisories.
-  # ════════════════════════════════════════════════════════════════════════════
   checks:
     name: Migrations & Audit
     runs-on: ubuntu-latest
@@ -103,9 +95,7 @@ jobs:
       - name: Dependency audit (high and critical)
         run: pnpm audit --prod --audit-level high
 
-  # ════════════════════════════════════════════════════════════════════════════
   # Secret scanning on every push/PR
-  # ════════════════════════════════════════════════════════════════════════════
   secrets:
     name: Secret Scan
     runs-on: ubuntu-latest
@@ -117,9 +107,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ════════════════════════════════════════════════════════════════════════════
   # Build — web app and the workers Docker image
-  # ════════════════════════════════════════════════════════════════════════════
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -146,13 +134,10 @@ jobs:
       - name: Build — workers Docker image
         run: docker build -f apps/workers/Dockerfile -t codeguard-workers:ci .
 
-  # ════════════════════════════════════════════════════════════════════════════
   # CodeGuard reviewing its own PRs (informational, never blocks a merge)
-  #
   # Needs repository secrets CODEGUARD_API_URL and CODEGUARD_API_KEY. `secrets`
   # can't be used in `if:` expressions, so the value is mapped to an env var
   # and checked there.
-  # ════════════════════════════════════════════════════════════════════════════
   codeguard-review:
     name: CodeGuard AI Review
     runs-on: ubuntu-latest
@@ -183,3 +168,31 @@ jobs:
       - name: Skip (not configured)
         if: env.CODEGUARDAPIURL == ''
         run: echo "CODEGUARDAPIURL secret not set — skipping self-review."
+
+  # Review quality: precision/recall on the eval set (apps/workers/evals).
+  # Fails when a prompt or model change drops below evals/baseline.json.
+  # Costs model tokens, so it runs on pull requests only and skips without a key.
+  eval:
+    name: Review Eval
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name == 'pull_request'
+    env:
+      LLM_PROVIDER: groq
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run review eval
+        if: env.GROQ_API_KEY != ''
+        run: pnpm eval
+      - name: Skip (no model key)
+        if: env.GROQ_API_KEY == ''
+        run: echo "GROQ_API_KEY secret not set — skipping the review eval."

@@ -4,6 +4,7 @@ import {
   DEFAULT_REPO_CONFIG,
   type AlignmentResult,
   type AssuranceDecision,
+  type CodeContext,
   type BlastRadiusReport,
   type BusinessIntent,
   type CheckResult,
@@ -30,6 +31,7 @@ import {
 } from "@codeguard/review-engine";
 import type { DependencyGraph } from "../analyzers/DependencyGraph.js";
 import type { Logger } from "../lib/logger.js";
+import type { RepoSnapshot } from "./snapshot.js";
 
 export type PullRequestData = Awaited<ReturnType<Octokit["rest"]["pulls"]["get"]>>["data"];
 
@@ -72,6 +74,10 @@ export interface ReviewRunState {
   manifests: Record<string, string>;
   config: RepoConfig;
 
+  // ── download_snapshot ──
+  /** Read-only copy of the reviewed commit's source files (null = use the API and the index). */
+  snapshot: RepoSnapshot | null;
+
   // ── collect_pr_context ──
   allFiles: PRFileInput[];
   /** Files this run reviews (incremental subset, ignores removed). */
@@ -103,6 +109,10 @@ export interface ReviewRunState {
   graph: DependencyGraph | null;
   graphAvailable: boolean;
   changedSymbols: ChangedSymbol[];
+
+  // ── build_code_context ──
+  /** Definitions the diff uses, call sites of changed functions, signature changes. */
+  codeContext: CodeContext | null;
 
   // ── extract_business_intent ──
   intent: BusinessIntent | null;
@@ -168,6 +178,7 @@ export function initialState(event: ReviewRequestedEvent, log: Logger): ReviewRu
     treeTruncated: false,
     manifests: {},
     config: DEFAULT_REPO_CONFIG,
+    snapshot: null,
     allFiles: [],
     files: [],
     ignoredFiles: [],
@@ -186,6 +197,7 @@ export function initialState(event: ReviewRequestedEvent, log: Logger): ReviewRu
     graph: null,
     graphAvailable: false,
     changedSymbols: [],
+    codeContext: null,
     intent: null,
     committer: { login: null, association: null, trust: "regular", priorPRs: 0, coAuthors: [], riskFactor: 1 },
     alignment: null,

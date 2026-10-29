@@ -79,6 +79,14 @@ export const EnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: optionalString,
   /** Max AI reviews a single user can start per hour (snippet + PR). */
   REVIEW_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
+  /**
+   * Download a read-only snapshot (tarball) of the reviewed commit, so the
+   * import graph, definitions and call sites cover the exact code. Off = read
+   * files one by one through the API and the index.
+   */
+  REVIEW_SNAPSHOT: booleanString(true),
+  /** Largest compressed tarball to download, in MB; bigger repos use the API path. */
+  REVIEW_SNAPSHOT_MAX_MB: z.coerce.number().positive().default(100),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

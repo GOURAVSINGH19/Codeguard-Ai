@@ -1,0 +1,28 @@
+{
+  "id": "sec-sql-injection",
+  "title": "Add user lookup by email",
+  "body": "Needed by the password-reset flow.",
+  "tags": [
+    "security",
+    "sql"
+  ],
+  "files": [
+    {
+      "filename": "src/db/users.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,8 @@\n+import { pool } from \"./pool\";\n+\n+export async function findUserByEmail(email: string) {\n+  const result = await pool.query(\n+    `SELECT id, email, role FROM users WHERE email = '${email}'`\n+  );\n+  return result.rows[0] ?? null;\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/db/users.ts",
+      "lines": [
+        5,
+        5
+      ],
+      "category": "security",
+      "minSeverity": "high",
+      "note": "user input interpolated into SQL"
+    }
+  ]
+}

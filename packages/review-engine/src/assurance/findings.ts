@@ -45,9 +45,17 @@ export function similarity(a: string, b: string): number {
 
 const RANK = (s: Finding["severity"]) => SEVERITIES.length - SEVERITIES.indexOf(s);
 
+/**
+ * A file-level finding (no line) and a line-level one in the same file are
+ * often the same bug told twice, e.g. the intent checker and a reviewer.
+ * Different authors word it differently, hence the lower bar.
+ */
+const FILE_LEVEL_SIMILARITY = 0.35;
+
 function isDuplicate(a: Finding, b: Finding): boolean {
   if (a.file !== b.file) return false;
   if (a.ruleId && a.ruleId === b.ruleId) return a.line === b.line;
+  if (a.file && (a.line === null) !== (b.line === null)) return similarity(a.message, b.message) >= FILE_LEVEL_SIMILARITY;
   const near = a.line === null || b.line === null ? a.line === b.line : Math.abs(a.line - b.line) <= 3;
   if (!near) return false;
   const threshold = a.category === b.category ? 0.45 : 0.65;
@@ -66,6 +74,19 @@ export function deduplicateFindings(findings: Finding[]): { findings: Finding[];
     const dup = kept.find((k) => isDuplicate(k, f));
     if (!dup) {
       kept.push({ ...f });
+      continue;
+    }
+    // Keep the version that points at a line (it can be posted inline), with the higher severity.
+    if (dup.line === null && f.line !== null) {
+      const sources = new Set([...(dup.alsoReportedBy ?? []), ...(f.alsoReportedBy ?? []), dup.source]);
+      sources.delete(f.source);
+      kept[kept.indexOf(dup)] = {
+        ...f,
+        severity: dup.severity,
+        alsoReportedBy: sources.size > 0 ? [...sources] : undefined,
+        confidence: dup.source !== f.source ? Math.min(1, Math.max(dup.confidence, f.confidence) + (1 - Math.max(dup.confidence, f.confidence)) * 0.5) : f.confidence,
+        suggestion: f.suggestion ?? dup.suggestion,
+      };
       continue;
     }
     if (f.source !== dup.source) {

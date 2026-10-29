@@ -1,4 +1,4 @@
-import { MissingConfigError } from "@codeguard/config";
+import { MissingConfigError, getEnv } from "@codeguard/config";
 import { db, codeChunks, eq, and, or, inArray, notInArray, ilike } from "@codeguard/db";
 import {
   ImportResolver,
@@ -37,6 +37,9 @@ import {
   loadRepoConfig,
   referencedIssueNumbers,
 } from "../github-data.js";
+import { codeContextStep } from "./code-context.js";
+import { DEFAULT_SNAPSHOT_LIMITS, downloadSnapshot } from "../snapshot.js";
+import type { RepoSnapshot } from "../snapshot.js";
 import { claimReview, countPriorPRs, failReview, lastCompletedReviewSha, takeReview, upsertPullRequest, upsertRepository } from "../store.js";
 import type { ReviewRunState } from "../state.js";
 
@@ -143,6 +146,55 @@ export const snapshotRepository: Step = {
   },
 };
 
+// ─── download_snapshot ───────────────────────────────────────────────────────
+/**
+ * Read-only copy of the reviewed commit (one tarball request, kept in memory,
+ * never executed). Later nodes read from it first and fall back to the API and
+ * the index for anything it lacks. Optional: a failure only loses precision.
+ */
+export const downloadSnapshotNode: Step = {
+  name: "download_snapshot",
+  optional: true,
+  async run(s) {
+    const env = getEnv();
+    if (!env.REVIEW_SNAPSHOT) return;
+    const maxDownloadBytes = env.REVIEW_SNAPSHOT_MAX_MB * 1024 * 1024;
+    // repo.size is the packed git history in KB. Far past the limit, don't start.
+    const repoBytes = (s.pr.base.repo.size ?? 0) * 1024;
+    if (repoBytes > maxDownloadBytes * 4) {
+      s.log.info("snapshot skipped: repository too large", { repoMb: Math.round(repoBytes / 1024 / 1024) });
+      return;
+    }
+    s.snapshot = await downloadSnapshot(s.octokit, s.event.owner, s.event.repo, s.headSha, { ...DEFAULT_SNAPSHOT_LIMITS, maxDownloadBytes });
+    s.log.info("snapshot", {
+      files: s.snapshot.files.size,
+      keptMb: +(s.snapshot.keptBytes / 1024 / 1024).toFixed(1),
+      downloadedMb: +(s.snapshot.downloadedBytes / 1024 / 1024).toFixed(1),
+      truncated: s.snapshot.truncated,
+      durationMs: s.snapshot.durationMs,
+    });
+  },
+};
+
+/** Files at the reviewed commit: snapshot first, the API for whatever it lacks. */
+export async function readRepoFiles(s: ReviewRunState, paths: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const p of paths) {
+    const text = s.snapshot?.files.get(p);
+    if (text !== undefined) out.set(p, text);
+  }
+  // A complete snapshot that lacks a file means it is filtered (binary, huge, vendored): don't ask the API.
+  const missing = s.snapshot && !s.snapshot.truncated ? [] : paths.filter((p) => !out.has(p));
+  if (missing.length > 0) for (const [p, t] of await getFilesText(s.octokit, s.event.owner, s.event.repo, missing, s.headSha)) out.set(p, t);
+  return out;
+}
+
+/** Code files of a snapshot, for the import graph. */
+function snapshotSources(snapshot: RepoSnapshot): Map<string, string> {
+  const kinds = new Set(["source", "test"]);
+  return new Map([...snapshot.files].filter(([path]) => kinds.has(classifyFile(path)) && !/\.(json|ya?ml|toml)$/.test(path)));
+}
+
 // ─── collect_pr_context ──────────────────────────────────────────────────────
 export const collectPrContext: Step = {
   name: "collect_pr_context",
@@ -177,9 +229,10 @@ export const collectPrContext: Step = {
     const wanted = s.files
       .filter((f) => f.status !== "removed" && classifyFile(f.filename) !== "generated")
       .sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions))
-      .slice(0, MAX_HEAD_FILES)
+      // The cap only saves API calls; a snapshot already has every file.
+      .slice(0, s.snapshot ? undefined : MAX_HEAD_FILES)
       .map((f) => f.filename);
-    s.headContents = await getFilesText(s.octokit, owner, repo, wanted, s.headSha);
+    s.headContents = await readRepoFiles(s, wanted);
   },
 };
 
@@ -304,7 +357,9 @@ export const buildSoftwareGraph: Step = {
   optional: true,
   async run(s) {
     const changed = s.allFiles.map((f) => f.filename);
-    const contents = await loadGraphContents(s.repositoryId, changed);
+    // The snapshot is the exact commit; the index (default branch) fills in only when it is missing or cut short.
+    const contents = s.snapshot ? snapshotSources(s.snapshot) : await loadGraphContents(s.repositoryId, changed);
+    if (s.snapshot?.truncated) for (const [path, text] of await loadGraphContents(s.repositoryId, changed)) if (!contents.has(path)) contents.set(path, text);
     for (const [path, text] of s.headContents) contents.set(path, text); // head beats the index
 
     const resolver = s.treePaths.length > 0
@@ -365,6 +420,10 @@ async function loadGraphContents(repositoryId: string, changedFiles: string[]): 
   for (const row of rows) byFile.set(row.filePath, [...(byFile.get(row.filePath) ?? []), row.content]);
   return new Map([...byFile].map(([path, parts]) => [path, parts.join("\n")]));
 }
+
+// ─── build_code_context ──────────────────────────────────────────────────────
+/** Definitions and call sites, read from the reviewed commit. */
+export const buildCodeContext = codeContextStep((s, paths) => (paths.length === 0 ? Promise.resolve(new Map()) : readRepoFiles(s, paths)));
 
 // ─── extract_business_intent ─────────────────────────────────────────────────
 export const extractBusinessIntent: Step = {

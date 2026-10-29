@@ -1,0 +1,38 @@
+{
+  "id": "ctx-cents-vs-dollars",
+  "title": "Add receipt line to order emails",
+  "body": "Shows the order total at the bottom of the receipt email.",
+  "tags": [
+    "bug",
+    "code-context"
+  ],
+  "files": [
+    {
+      "filename": "src/emails/receipt.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,6 @@\n+import { formatMoney } from \"../utils/money\";\n+import type { Order } from \"../orders/types\";\n+\n+export function receiptLine(order: Order): string {\n+  return `Total: ${formatMoney(order.totalCents)}`;\n+}",
+      "content": "import { formatMoney } from \"../utils/money\";\nimport type { Order } from \"../orders/types\";\n\nexport function receiptLine(order: Order): string {\n  return `Total: ${formatMoney(order.totalCents)}`;\n}\n"
+    }
+  ],
+  "repoFiles": [
+    {
+      "path": "src/utils/money.ts",
+      "content": "/** Format an amount in DOLLARS (not cents) as \"$12.34\". */\nexport function formatMoney(dollars: number): string {\n  return `$${dollars.toFixed(2)}`;\n}\n"
+    },
+    {
+      "path": "src/orders/types.ts",
+      "content": "export interface Order {\n  id: string;\n  /** Integer amount in cents, e.g. 1999 = $19.99 */\n  totalCents: number;\n}\n"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/emails/receipt.ts",
+      "lines": [
+        5,
+        5
+      ],
+      "category": "bug",
+      "note": "formatMoney expects dollars; passing cents shows $1999.00 for a $19.99 order"
+    }
+  ]
+}

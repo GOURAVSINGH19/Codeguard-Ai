@@ -1,0 +1,28 @@
+{
+  "id": "bug-missing-await",
+  "title": "Speed up checkout",
+  "body": "Small cleanup in the checkout flow.",
+  "tags": [
+    "bug",
+    "async"
+  ],
+  "files": [
+    {
+      "filename": "src/orders/checkout.ts",
+      "status": "modified",
+      "patch": "@@ -10,8 +10,8 @@ export async function checkout(cartId: string) {\n   const cart = await loadCart(cartId);\n   if (cart.items.length === 0) throw new Error(\"empty cart\");\n \n-  await chargeCard(cart.customerId, cart.total);\n+  chargeCard(cart.customerId, cart.total);\n   await markCartPaid(cartId);\n   await sendReceipt(cart.customerId);\n   return { ok: true };\n }"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/orders/checkout.ts",
+      "lines": [
+        13,
+        13
+      ],
+      "category": "bug",
+      "minSeverity": "high",
+      "note": "cart marked paid before (and even if) the charge fails"
+    }
+  ]
+}

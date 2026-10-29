@@ -142,7 +142,8 @@ function stageNotes(s: ReviewRunState): string[] {
   const notes: string[] = [];
   if (s.incremental) notes.push(`Only commits pushed since ${s.reviewBaseSha!.slice(0, 7)} are shown; earlier changes were reviewed before.`);
   if (s.blast.dependents.length > 0) {
-    notes.push(`Files that depend on the changed code (not shown): ${s.blast.dependents.slice(0, 8).map((d) => d.path).join(", ")}`);
+    const shown = s.codeContext && s.codeContext.callSites.length > 0 ? "their call sites are in the related code" : "not shown";
+    notes.push(`Files that depend on the changed code (${shown}): ${s.blast.dependents.slice(0, 8).map((d) => d.path).join(", ")}`);
   }
   if (s.changedSymbols.length > 0) {
     notes.push(`Functions/classes whose bodies changed: ${s.changedSymbols.slice(0, 15).map((c) => `${c.name} (${c.file})`).join(", ")}`);

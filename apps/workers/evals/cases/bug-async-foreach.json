@@ -1,0 +1,27 @@
+{
+  "id": "bug-async-foreach",
+  "title": "Sync all repositories",
+  "body": "Runs the sync for every connected repo, then logs completion.",
+  "tags": [
+    "bug",
+    "async"
+  ],
+  "files": [
+    {
+      "filename": "src/jobs/sync.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,6 @@\n+export async function syncAll(repos: string[], sync: (r: string) => Promise<void>) {\n+  repos.forEach(async (repo) => {\n+    await sync(repo);\n+  });\n+  console.log(\"all repos synced\");\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/jobs/sync.ts",
+      "lines": [
+        2,
+        4
+      ],
+      "category": "bug",
+      "note": "forEach does not await: logs before work finishes, rejections are unhandled"
+    }
+  ]
+}

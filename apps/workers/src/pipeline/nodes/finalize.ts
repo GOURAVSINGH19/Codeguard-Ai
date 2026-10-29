@@ -1,87 +1,22 @@
 import { TOPICS, prMessageKey } from "@codeguard/kafka";
 import type { ReviewCompletedEvent } from "@codeguard/kafka";
 import {
-  VerificationOutputSchema,
-  aggregateFindings,
-  applyFindingVerdicts,
-  buildContextPacks,
   buildScorecard,
-  buildVerifyMessages,
   createCheckRun,
   decideAssurance,
-  deduplicateFindings,
   evaluatePolicies,
-  filterForReport,
   generateInsights,
-  planVerification,
   postReview,
-  renderPack,
 } from "@codeguard/review-engine";
 import type { PipelineStep } from "@codeguard/review-engine";
 import { getWorkerProducer } from "../../queue/kafkaClient.js";
+import { withRetry } from "../../lib/retry.js";
 import { patchReviewMetadata, saveCompletedReview } from "../store.js";
 import type { ReviewRunState } from "../state.js";
 
 type Step = PipelineStep<ReviewRunState>;
 
-export const aggregateFindingsNode: Step = {
-  name: "aggregate_findings",
-  async run(s) {
-    s.aggregated = aggregateFindings(Object.values(s.findingsBySource), new Set(s.allFiles.map((f) => f.filename)));
-  },
-};
-
-export const deduplicateFindingsNode: Step = {
-  name: "deduplicate_findings",
-  async run(s) {
-    const { findings, removed } = deduplicateFindings(s.aggregated);
-    s.deduplicated = findings;
-    s.duplicatesRemoved = removed;
-  },
-};
-
-export const verificationPlanner: Step = {
-  name: "verification_planner",
-  async run(s) {
-    s.plan = planVerification(s.deduplicated, s.config);
-  },
-};
-
-/**
- * A second model, with no stake in the findings, checks each one against the
- * diff. If it fails, findings are kept unverified (precision drops, the
- * review is not lost).
- */
-export const independentVerify: Step = {
-  name: "independent_verify",
-  async run(s) {
-    const plan = s.plan!;
-    let checked = plan.verify.map((f) => ({ ...f, verification: "unverified" as const }));
-    if (plan.verify.length > 0) {
-      try {
-        s.packs ??= buildContextPacks({ files: s.files });
-        const files = [...new Set(plan.verify.map((f) => f.file).filter((f): f is string => Boolean(f)))];
-        const diff = renderPack(s.packs.verify, s.files, files);
-        const output = await s.llm.json(buildVerifyMessages({ diff: diff.text, relatedCode: s.packs.verify.relatedCode, issues: plan.verify }), VerificationOutputSchema);
-        const result = applyFindingVerdicts(plan.verify, output);
-        checked = result.findings.map((f) => ({ ...f, verification: f.verification ?? "unverified" })) as typeof checked;
-        s.verification = {
-          status: "verified",
-          confirmed: result.confirmed,
-          uncertain: result.uncertain,
-          rejected: result.rejected.map((r) => ({ message: r.message, reason: r.reason })),
-        };
-      } catch (err) {
-        const error = (err as Error).message;
-        s.log.warn("verification failed, keeping unverified findings", { error });
-        s.verification = { status: "failed", confirmed: 0, uncertain: 0, rejected: [], error: error.slice(0, 300) };
-      }
-    }
-    const { kept, filtered } = filterForReport([...plan.trusted, ...checked, ...plan.unverified], s.config);
-    s.findings = kept;
-    s.filteredOut = [...plan.dropped, ...filtered];
-  },
-};
+export { aggregateFindingsNode, deduplicateFindingsNode, independentVerify, verificationPlanner } from "./findings.js";
 
 export const scorecardNode: Step = {
   name: "scorecard",
@@ -154,21 +89,28 @@ export const publishReport: Step = {
     const github: Record<string, unknown> = {};
     if (s.publishToGitHub) {
       const { owner, repo, pullNumber } = s.event;
+      const onRetry = (what: string) => (err: unknown, attempt: number, delayMs: number) =>
+        s.log.warn(`${what} failed, retrying`, { attempt, delayMs, error: (err as Error).message });
+
       try {
-        const posted = await postReview(s.octokit, {
-          owner,
-          repo,
-          pullNumber,
-          commitId: s.headSha,
-          score: s.scorecard!.overall,
-          summary: s.insights!.summary,
-          headline: `**Score:** \`${s.scorecard!.overall.toFixed(1)} / 10\` · **Risk:** ${s.risk!.level} · **Findings:** ${s.findings.length}`,
-          sections: s.insights!.sections,
-          issues: s.findings,
-          commentable: s.commentable,
-          notes: scopeNotes(s),
-          footer: "CodeGuard AI · staged assurance review",
-        });
+        const posted = await withRetry(
+          () =>
+            postReview(s.octokit, {
+              owner,
+              repo,
+              pullNumber,
+              commitId: s.headSha,
+              score: s.scorecard!.overall,
+              summary: s.insights!.summary,
+              headline: `**Score:** \`${s.scorecard!.overall.toFixed(1)} / 10\` · **Risk:** ${s.risk!.level} · **Findings:** ${s.findings.length}`,
+              sections: s.insights!.sections,
+              issues: s.findings,
+              commentable: s.commentable,
+              notes: scopeNotes(s),
+              footer: "CodeGuard AI · staged assurance review",
+            }),
+          { onRetry: onRetry("posting the review to GitHub") }
+        );
         s.published = true;
         s.githubReview = { id: posted.id, url: posted.htmlUrl, mode: posted.mode, inlineCount: posted.inlineCount };
         Object.assign(github, { reviewId: posted.id, url: posted.htmlUrl, mode: posted.mode, inlineCount: posted.inlineCount });
@@ -178,21 +120,30 @@ export const publishReport: Step = {
       }
 
       try {
-        await createCheckRun(s.octokit, {
-          owner,
-          repo,
-          headSha: s.headSha,
-          conclusion: s.decision!.conclusion,
-          score: s.scorecard!.overall,
-          issues: s.findings,
-          failOn: s.config.fail_on,
-          title: s.decision!.headline,
-          summary: s.insights!.checkSummary,
-        });
+        await withRetry(
+          () =>
+            createCheckRun(s.octokit, {
+              owner,
+              repo,
+              headSha: s.headSha,
+              conclusion: s.decision!.conclusion,
+              score: s.scorecard!.overall,
+              issues: s.findings,
+              failOn: s.config.fail_on,
+              title: s.decision!.headline,
+              summary: s.insights!.checkSummary,
+            }),
+          { onRetry: onRetry("creating the check run") }
+        );
       } catch (err) {
-        s.log.warn("check run not created (needs checks:write permission)", { error: (err as Error).message });
+        s.log.error("check run not created (a 403/404 usually means the App lacks checks:write)", { error: (err as Error).message });
         github.checkRunError = (err as Error).message.slice(0, 300);
       }
+
+      // The review itself is saved, but the PR may have nothing to show for it.
+      // Record that on the row so it is not mistaken for a clean publish.
+      github.publishStatus = publishStatus(github);
+      if (github.publishStatus !== "published") s.log.error("review saved but not fully published to GitHub", { publishStatus: github.publishStatus });
       await patchReviewMetadata(s.reviewId!, { github, conclusion: s.decision!.conclusion }).catch(() => {});
     }
 
@@ -217,6 +168,12 @@ export const publishReport: Step = {
     }
   },
 };
+
+/** "published" only when both the review and the Check Run reached GitHub. */
+export function publishStatus(github: { error?: unknown; checkRunError?: unknown }): "published" | "partial" | "failed" {
+  if (github.error && github.checkRunError) return "failed";
+  return github.error || github.checkRunError ? "partial" : "published";
+}
 
 function scopeNotes(s: ReviewRunState): string[] {
   const notes = [`Reviewed ${s.files.length} file(s)${s.incremental ? " changed since the last review" : ""}.`];

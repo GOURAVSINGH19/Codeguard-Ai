@@ -11,6 +11,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval": "pnpm --filter workers eval",
     "db:generate": "pnpm --filter @codeguard/db db:generate",
     "db:migrate": "pnpm --filter @codeguard/db db:migrate",
     "db:check": "pnpm --filter @codeguard/db exec drizzle-kit check"

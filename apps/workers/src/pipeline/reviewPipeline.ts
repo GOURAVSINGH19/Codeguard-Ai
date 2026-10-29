@@ -3,11 +3,13 @@ import type { PipelineNode } from "@codeguard/review-engine";
 import type { ReviewRequestedEvent } from "@codeguard/kafka";
 import { logger } from "../lib/logger.js";
 import {
+  buildCodeContext,
   buildContextPacksNode,
   buildSoftwareGraph,
   collectBusinessContext,
   collectPrContext,
   detectTechnologyNode,
+  downloadSnapshotNode,
   extractBusinessIntent,
   initializeRun,
   resolveSkillsNode,
@@ -33,9 +35,11 @@ import type { ReviewRunState } from "./state.js";
 /**
  * The review workflow, in order:
  *
- *   initialize_run → validate_event → snapshot_repository → collect_pr_context
+ *   initialize_run → validate_event → snapshot_repository → download_snapshot
+ *   → collect_pr_context
  *   → collect_business_context → detect_technology → resolve_skills
- *   → build_context_packs → build_software_graph → extract_business_intent
+ *   → build_context_packs → build_software_graph → build_code_context
+ *   → extract_business_intent
  *   → STAGE 1 (committer ∥ align ∥ volume ∥ cohesion)
  *   → STAGE 2 (blast_radius ∥ criticality) → risk_assessment
  *   → STAGE 3 (quality ∥ security ∥ testing)
@@ -50,12 +54,14 @@ export const REVIEW_WORKFLOW: PipelineNode<ReviewRunState>[] = [
   initializeRun,
   validateEvent,
   snapshotRepository,
+  downloadSnapshotNode,
   collectPrContext,
   collectBusinessContext,
   detectTechnologyNode,
   resolveSkillsNode,
   buildContextPacksNode,
   buildSoftwareGraph,
+  buildCodeContext,
   extractBusinessIntent,
   stage1,
   stage2,

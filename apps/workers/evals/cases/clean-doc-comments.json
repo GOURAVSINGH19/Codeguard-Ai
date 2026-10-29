@@ -1,0 +1,16 @@
+{
+  "id": "clean-doc-comments",
+  "title": "Document retry settings",
+  "body": "Comments only, no behaviour change.",
+  "tags": [
+    "clean"
+  ],
+  "files": [
+    {
+      "filename": "src/lib/retry-config.ts",
+      "status": "modified",
+      "patch": "@@ -1,4 +1,6 @@\n-export const MAX_RETRIES = 3;\n+/** Attempts after the first one. Kept small: each retry adds latency for the user. */\n+export const MAX_RETRIES = 3;\n+/** Upper bound for one backoff wait, in milliseconds. */\n export const MAX_BACKOFF_MS = 30_000;\n export const BASE_BACKOFF_MS = 1_000;\n export const JITTER_MS = 250;"
+    }
+  ],
+  "expected": []
+}

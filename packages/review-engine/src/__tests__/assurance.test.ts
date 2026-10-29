@@ -186,6 +186,35 @@ describe("findings pipeline", () => {
     expect(findings[0].confidence).toBeGreaterThan(0.6);
   });
 
+  it("folds a file-level finding into the line-level report of the same bug", () => {
+    // Real pair from the eval: the intent checker and the quality reviewer describing one async bug.
+    const fileLevel = finding({
+      source: "align",
+      severity: "high",
+      category: "maintainability",
+      file: "src/jobs/sync.ts",
+      line: null,
+      message: "Stated intent not fully implemented: Uses Array.forEach with async callbacks, so the function does not await the sync operations",
+    });
+    const lineLevel = finding({
+      source: "quality",
+      severity: "medium",
+      category: "bug",
+      file: "src/jobs/sync.ts",
+      line: 2,
+      message: "Using repos.forEach with an async callback does not await the async operations",
+    });
+    const { findings, removed } = deduplicateFindings([fileLevel, lineLevel]);
+    expect(removed).toBe(1);
+    expect(findings[0]).toMatchObject({ source: "quality", line: 2, severity: "high", alsoReportedBy: ["align"] });
+  });
+
+  it("keeps a file-level finding about something else in the same file", () => {
+    const fileLevel = finding({ source: "align", file: "a.ts", line: null, message: "The promised CSV export endpoint is not implemented" });
+    const lineLevel = finding({ file: "a.ts", line: 5, message: "Possible null dereference of the user object" });
+    expect(deduplicateFindings([fileLevel, lineLevel]).removed).toBe(0);
+  });
+
   it("trusts deterministic findings and verifies model findings", () => {
     const secret = finding({ source: "security", deterministic: true, confidence: 0.95, ruleId: "secret/x" });
     const model = finding();

@@ -15,7 +15,8 @@ import { verifyGitHubSignature } from "./webhook-signature";
  *    (only `NODE_ENV=development` may skip, with a loud warning).
  * 2. Record the delivery; a repeated `X-GitHub-Delivery` is acknowledged and
  *    dropped, so GitHub redeliveries never produce duplicate reviews.
- * 3. Handle installation events inline (fast DB updates).
+ * 3. Handle installation events inline (fast DB updates). If that fails the
+ *    delivery is marked "failed" and a redelivery is allowed to run again.
  * 4. Publish to Kafka with a per-PR key so events for one PR stay ordered.
  *    If Kafka is down the row stays "received" and the worker's outbox
  *    sweeper publishes it later — no delivery is lost.
@@ -57,10 +58,18 @@ export async function handleGitHubWebhook(req: Request, tag: string): Promise<Re
 
   // Awaited (not fire-and-forget): serverless functions can be frozen as soon
   // as the response is sent, which used to lose audit rows.
+  const values = { githubDeliveryId: deliveryId, event: githubEvent, action: payload?.action ?? null, payload, status: "received" as const };
   const inserted = await db
     .insert(webhookEvents)
-    .values({ githubDeliveryId: deliveryId, event: githubEvent, action: payload?.action ?? null, payload, status: "received" })
-    .onConflictDoNothing({ target: webhookEvents.githubDeliveryId })
+    .values(values)
+    .onConflictDoUpdate({
+      target: webhookEvents.githubDeliveryId,
+      // A redelivery (same X-GitHub-Delivery) of a delivery that FAILED earlier
+      // runs again. Any other status means it is already handled or in flight,
+      // so it is acknowledged and dropped.
+      set: { ...values, error: null, processedAt: null, lastPublishedAt: null, publishAttempts: 0, createdAt: new Date() },
+      setWhere: eq(webhookEvents.status, "failed"),
+    })
     .returning({ id: webhookEvents.id });
 
   if (inserted.length === 0) {
@@ -70,8 +79,16 @@ export async function handleGitHubWebhook(req: Request, tag: string): Promise<Re
   try {
     await handleInstallationEvents(githubEvent, payload);
   } catch (err) {
-    // Log and continue: the delivery is recorded and GitHub can redeliver.
+    // Mark the delivery failed so GitHub's "Redeliver" can run it again, and
+    // tell GitHub it failed. Publishing on would be pointless: the workers
+    // would not find the repositories this sync was meant to create.
     console.error(`[${tag}] installation event handling failed:`, err);
+    await db
+      .update(webhookEvents)
+      .set({ status: "failed", error: `installation sync failed: ${(err as Error).message}`.slice(0, 500), processedAt: new Date() })
+      .where(eq(webhookEvents.githubDeliveryId, deliveryId))
+      .catch(() => {});
+    return NextResponse.json({ error: "Installation sync failed — redeliver this webhook" }, { status: 500 });
   }
 
   // Broker not reachable from here: the stored row is the outbox entry and
@@ -82,7 +99,10 @@ export async function handleGitHubWebhook(req: Request, tag: string): Promise<Re
     const event: WebhookReceivedEvent = { githubEvent, deliveryId, payload: rawBody, receivedAt: new Date().toISOString() };
     const producer = await getSharedProducer();
     await producer.send({ topic: TOPICS.WEBHOOK_RECEIVED, messages: [{ key: messageKey(githubEvent, payload, deliveryId), value: JSON.stringify(event) }] });
-    await db.update(webhookEvents).set({ status: "processing" }).where(eq(webhookEvents.githubDeliveryId, deliveryId));
+    await db
+      .update(webhookEvents)
+      .set({ status: "processing", lastPublishedAt: new Date(), publishAttempts: 1 })
+      .where(eq(webhookEvents.githubDeliveryId, deliveryId));
   } catch (err) {
     // GitHub does not retry failed deliveries automatically. The row stays in
     // status "received" (an outbox entry) and the workers' outbox sweeper

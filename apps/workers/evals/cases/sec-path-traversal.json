@@ -1,0 +1,28 @@
+{
+  "id": "sec-path-traversal",
+  "title": "Add a file download endpoint",
+  "body": "Serves files users uploaded earlier.",
+  "tags": [
+    "security",
+    "node"
+  ],
+  "files": [
+    {
+      "filename": "src/routes/files.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,9 @@\n+import express from \"express\";\n+import path from \"node:path\";\n+\n+export const files = express.Router();\n+\n+files.get(\"/download\", (req, res) => {\n+  const name = String(req.query.name);\n+  res.sendFile(path.join(\"/srv/uploads\", name));\n+});"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/routes/files.ts",
+      "lines": [
+        7,
+        8
+      ],
+      "category": "security",
+      "minSeverity": "high",
+      "note": "../ in name escapes the uploads folder"
+    }
+  ]
+}

@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:local": "tsx watch src/local.ts",
     "start": "tsx src/index.ts",
+    "eval": "tsx src/evals/run.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },

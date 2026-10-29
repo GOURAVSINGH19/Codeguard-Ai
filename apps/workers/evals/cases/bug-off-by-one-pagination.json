@@ -1,0 +1,26 @@
+{
+  "id": "bug-off-by-one-pagination",
+  "title": "Add a paginate helper",
+  "body": "Pages are 1-based, matching the public API.",
+  "tags": [
+    "bug"
+  ],
+  "files": [
+    {
+      "filename": "src/api/paginate.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,5 @@\n+export function paginate<T>(items: T[], page: number, pageSize: number): T[] {\n+  // pages are 1-based\n+  const start = page * pageSize;\n+  return items.slice(start, start + pageSize);\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/api/paginate.ts",
+      "lines": [
+        3,
+        3
+      ],
+      "category": "bug",
+      "note": "page 1 skips the first page of results"
+    }
+  ]
+}

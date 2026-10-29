@@ -1,0 +1,21 @@
+{
+  "id": "clean-clamp-with-tests",
+  "title": "Add clamp helper with tests",
+  "body": "Small utility used by the slider component.",
+  "tags": [
+    "clean"
+  ],
+  "files": [
+    {
+      "filename": "src/utils/clamp.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,5 @@\n+/** Limit `value` to the inclusive range [min, max]. */\n+export function clamp(value: number, min: number, max: number): number {\n+  if (min > max) throw new RangeError(\"min must be <= max\");\n+  return Math.min(Math.max(value, min), max);\n+}"
+    },
+    {
+      "filename": "src/utils/__tests__/clamp.test.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,15 @@\n+import { describe, expect, it } from \"vitest\";\n+import { clamp } from \"../clamp\";\n+\n+describe(\"clamp\", () => {\n+  it(\"keeps values inside the range\", () => {\n+    expect(clamp(5, 0, 10)).toBe(5);\n+  });\n+  it(\"limits values outside the range\", () => {\n+    expect(clamp(-1, 0, 10)).toBe(0);\n+    expect(clamp(11, 0, 10)).toBe(10);\n+  });\n+  it(\"rejects an empty range\", () => {\n+    expect(() => clamp(1, 5, 0)).toThrow(RangeError);\n+  });\n+});"
+    }
+  ],
+  "expected": []
+}

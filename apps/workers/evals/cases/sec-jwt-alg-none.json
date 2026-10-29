@@ -1,0 +1,28 @@
+{
+  "id": "sec-jwt-alg-none",
+  "title": "Make the JWT algorithm configurable",
+  "body": "Lets ops switch the signing algorithm with JWT_ALG without a deploy.",
+  "tags": [
+    "security",
+    "auth"
+  ],
+  "files": [
+    {
+      "filename": "src/auth/token.ts",
+      "status": "modified",
+      "patch": "@@ -1,6 +1,6 @@\n import jwt from \"jsonwebtoken\";\n \n-const ALG = \"RS256\";\n+const ALG = process.env.JWT_ALG ?? \"none\";\n \n export function verify(token: string, key: string) {\n   return jwt.verify(token, key, { algorithms: [ALG as jwt.Algorithm] });"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/auth/token.ts",
+      "lines": [
+        3,
+        3
+      ],
+      "category": "security",
+      "minSeverity": "high",
+      "note": "falls back to the unsigned 'none' algorithm"
+    }
+  ]
+}

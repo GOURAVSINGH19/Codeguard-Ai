@@ -9,6 +9,7 @@ export * from "./technology";
 export * from "./skills";
 export * from "./imports";
 export * from "./context";
+export * from "./code-context";
 export * from "./prompts";
 export * from "./insights";
 export * from "./runner";

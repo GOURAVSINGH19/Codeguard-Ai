@@ -1,0 +1,39 @@
+{
+  "id": "ctx-breaking-signature",
+  "title": "Support multiple currencies in chargeCard",
+  "body": "chargeCard now takes the currency instead of always charging USD.",
+  "tags": [
+    "bug",
+    "code-context"
+  ],
+  "files": [
+    {
+      "filename": "src/billing/charge.js",
+      "status": "modified",
+      "patch": "@@ -1,5 +1,5 @@\n import { gateway } from \"./gateway\";\n \n-export async function chargeCard(customerId, amount) {\n-  return gateway.charge({ customerId, amount, currency: \"usd\" });\n+export async function chargeCard(customerId, amount, currency) {\n+  return gateway.charge({ customerId, amount, currency });\n }",
+      "content": "import { gateway } from \"./gateway\";\n\nexport async function chargeCard(customerId, amount, currency) {\n  return gateway.charge({ customerId, amount, currency });\n}\n"
+    }
+  ],
+  "repoFiles": [
+    {
+      "path": "src/billing/gateway.js",
+      "content": "export const gateway = {\n  async charge(req) {\n    return fetch(\"https://pay.example/charge\", { method: \"POST\", body: JSON.stringify(req) });\n  },\n};\n"
+    },
+    {
+      "path": "src/orders/checkout.js",
+      "content": "import { chargeCard } from \"../billing/charge\";\nimport { loadCart, markCartPaid } from \"./cart\";\n\nexport async function checkout(cartId) {\n  const cart = await loadCart(cartId);\n  await chargeCard(cart.customerId, cart.total);\n  await markCartPaid(cartId);\n}\n"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/billing/charge.js",
+      "lines": [
+        3,
+        4
+      ],
+      "category": "bug",
+      "minSeverity": "high",
+      "note": "checkout.js (not in the PR) still calls chargeCard with 2 arguments, so currency is undefined"
+    }
+  ]
+}

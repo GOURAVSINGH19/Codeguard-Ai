@@ -1,4 +1,4 @@
-import { bigint, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { githubInstallations } from "./github-installations";
 import { repositories } from "./repositories";
 
@@ -24,6 +24,10 @@ export const webhookEvents = pgTable("webhook_events", {
   payload: jsonb("payload").notNull(),
   status: webhookDeliveryStatusEnum("status").default("received").notNull(),
   error: text("error"), // error message if failed
+  /** When this delivery was last put on Kafka (by the web app or the outbox sweeper). */
+  lastPublishedAt: timestamp("last_published_at", { withTimezone: true }),
+  /** How many times it was published; the sweeper gives up after a few. */
+  publishAttempts: integer("publish_attempts").default(0).notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

@@ -1,0 +1,27 @@
+{
+  "id": "perf-n-plus-one",
+  "title": "Report: orders with their customers",
+  "body": "Used by the nightly finance export.",
+  "tags": [
+    "performance",
+    "database"
+  ],
+  "files": [
+    {
+      "filename": "src/services/report.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,11 @@\n+import { db } from \"../db\";\n+\n+export async function ordersWithCustomers(orderIds: string[]) {\n+  const result = [];\n+  for (const id of orderIds) {\n+    const order = await db.order.findUnique({ where: { id } });\n+    const customer = await db.customer.findUnique({ where: { id: order!.customerId } });\n+    result.push({ ...order, customer });\n+  }\n+  return result;\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/services/report.ts",
+      "lines": [
+        5,
+        7
+      ],
+      "category": "performance",
+      "note": "two queries per order inside a loop (N+1); order! also crashes on a missing id"
+    }
+  ]
+}

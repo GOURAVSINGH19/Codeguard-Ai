@@ -1,0 +1,28 @@
+{
+  "id": "sec-xss-react",
+  "title": "Render rich-text comments",
+  "body": "Comment HTML comes straight from the comment form so formatting is kept.",
+  "tags": [
+    "security",
+    "react"
+  ],
+  "files": [
+    {
+      "filename": "src/components/Comment.tsx",
+      "status": "added",
+      "patch": "@@ -0,0 +1,10 @@\n+type Props = { author: string; html: string };\n+\n+export function Comment({ author, html }: Props) {\n+  return (\n+    <div className=\"comment\">\n+      <strong>{author}</strong>\n+      <div dangerouslySetInnerHTML={{ __html: html }} />\n+    </div>\n+  );\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/components/Comment.tsx",
+      "lines": [
+        7,
+        7
+      ],
+      "category": "security",
+      "minSeverity": "high",
+      "note": "unsanitised user HTML"
+    }
+  ]
+}

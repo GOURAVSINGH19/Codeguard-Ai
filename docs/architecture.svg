@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -70 1850 730" font-family="'Segoe Print','Comic Sans MS',cursive,sans-serif">
+<rect x="-10" y="-70" width="1850" height="730" fill="#ffffff"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L10,5 L0,9" fill="none" stroke="#1e1e1e" stroke-width="1.5"/></marker></defs>
+<rect x="40" y="60" width="170" height="90" rx="8" fill="#e9ecef" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="125" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="125" y="101">GitHub</tspan><tspan x="125" y="121">PR opened / pushed</tspan></text>
+<rect x="40" y="430" width="170" height="70" rx="8" fill="#e9ecef" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="125" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="125" y="461">Developer</tspan><tspan x="125" y="481">(browser)</tspan></text>
+<rect x="270" y="30" width="340" height="540" rx="12" fill="#a5d8ff" fill-opacity="0.3" stroke="#1e1e1e" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="284" text-anchor="start" font-size="18" fill="#1e1e1e"><tspan x="284" y="56">Next.js 16 · Vercel</tspan></text>
+<rect x="295" y="80" width="290" height="90" rx="8" fill="#a5d8ff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="440" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="440" y="111">Webhook handler</tspan><tspan x="440" y="131">/api/webhooks/github</tspan><tspan x="440" y="151">HMAC verify · dedupe</tspan></text>
+<rect x="295" y="260" width="290" height="80" rx="8" fill="#a5d8ff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="440" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="440" y="296">Review API</tspan><tspan x="440" y="316">/api/review · /api/reviews</tspan></text>
+<rect x="295" y="430" width="290" height="90" rx="8" fill="#a5d8ff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="440" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="440" y="461">Dashboard UI</tspan><tspan x="440" y="481">live review progress</tspan><tspan x="440" y="501">Clerk auth (GitHub OAuth)</tspan></text>
+<rect x="650" y="30" width="230" height="540" rx="12" fill="#b2f2bb" fill-opacity="0.3" stroke="#1e1e1e" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="664" text-anchor="start" font-size="18" fill="#1e1e1e"><tspan x="664" y="56">Neon Postgres</tspan></text>
+<ellipse cx="765" cy="130" rx="95" ry="45" fill="#b2f2bb" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="765" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="765" y="126">webhook_events</tspan><tspan x="765" y="146">(outbox)</tspan></text>
+<ellipse cx="765" cy="305" rx="95" ry="45" fill="#b2f2bb" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="765" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="765" y="301">reviews · findings</tspan><tspan x="765" y="321">repos · users</tspan></text>
+<ellipse cx="765" cy="485" rx="95" ry="45" fill="#b2f2bb" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="765" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="765" y="481">code_chunks</tspan><tspan x="765" y="501">(pgvector)</tspan></text>
+<rect x="940" y="70" width="160" height="120" rx="8" fill="#ffec99" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1020" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1020" y="116">Kafka</tspan><tspan x="1020" y="136">(KRaft)</tspan><tspan x="1020" y="156">+ DLQ topics</tspan></text>
+<rect x="1180" y="30" width="330" height="540" rx="12" fill="#d0bfff" fill-opacity="0.3" stroke="#1e1e1e" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="1194" text-anchor="start" font-size="18" fill="#1e1e1e"><tspan x="1194" y="56">Workers · Docker</tspan></text>
+<rect x="1205" y="80" width="280" height="70" rx="8" fill="#d0bfff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1345" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1345" y="111">outbox &amp; recovery</tspan><tspan x="1345" y="131">sweepers</tspan></text>
+<rect x="1205" y="180" width="280" height="70" rx="8" fill="#d0bfff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1345" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1345" y="211">webhookProcessor</tspan><tspan x="1345" y="231">verify → review.requested</tspan></text>
+<rect x="1205" y="280" width="280" height="110" rx="8" fill="#d0bfff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1345" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1345" y="311">reviewProcessor · 25 steps</tspan><tspan x="1345" y="331">blast radius + RAG context</tspan><tspan x="1345" y="351">quality ∥ security ∥ testing</tspan><tspan x="1345" y="371">→ verify → score → policy</tspan></text>
+<rect x="1205" y="430" width="280" height="90" rx="8" fill="#d0bfff" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1345" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1345" y="461">full / incremental indexer</tspan><tspan x="1345" y="481">tree-sitter → AST chunks</tspan><tspan x="1345" y="501">→ embeddings</tspan></text>
+<ellipse cx="1685" cy="235" rx="125" ry="55" fill="#ffc9c9" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1685" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1685" y="221">LLM provider</tspan><tspan x="1685" y="241">Groq · OpenAI</tspan><tspan x="1685" y="261">Anthropic</tspan></text>
+<rect x="1580" y="360" width="210" height="90" rx="8" fill="#e9ecef" fill-opacity="1" stroke="#1e1e1e" stroke-width="1.5"/>
+<text x="1685" text-anchor="middle" font-size="16" fill="#1e1e1e"><tspan x="1685" y="391">GitHub API</tspan><tspan x="1685" y="411">inline comments</tspan><tspan x="1685" y="431">+ Check Run</tspan></text>
+<polyline points="210,105 295,120" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="218" text-anchor="start" font-size="14" fill="#495057"><tspan x="218" y="96">2. webhook</tspan></text>
+<polyline points="125,430 125,150" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="60" text-anchor="start" font-size="14" fill="#495057"><tspan x="60" y="299">1. opens PR</tspan></text>
+<polyline points="210,465 295,475" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<polyline points="440,430 440,340" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="450" text-anchor="start" font-size="14" fill="#495057"><tspan x="450" y="394">11. live progress</tspan></text>
+<polyline points="585,300 670,305" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="585" text-anchor="start" font-size="14" fill="#495057"><tspan x="585" y="284">11. read</tspan></text>
+<polyline points="585,125 670,130" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="590" text-anchor="start" font-size="14" fill="#495057"><tspan x="590" y="109">3. save first</tspan></text>
+<polyline points="860,120 940,120" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="862" text-anchor="start" font-size="14" fill="#495057"><tspan x="862" y="106">4. publish</tspan></text>
+<polyline points="1205,115 1100,110" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1118" text-anchor="start" font-size="14" fill="#495057"><tspan x="1118" y="96">sweep</tspan></text>
+<polyline points="1100,150 1205,215" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1020" text-anchor="start" font-size="14" fill="#495057"><tspan x="1020" y="249">5. webhook.received</tspan></text>
+<polyline points="1100,170 1205,320" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1000" text-anchor="start" font-size="14" fill="#495057"><tspan x="1000" y="299">6. review.requested</tspan></text>
+<polyline points="1100,185 1205,455" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1140" text-anchor="start" font-size="14" fill="#495057"><tspan x="1140" y="409">index.*</tspan></text>
+<polyline points="1205,355 860,310" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1000" text-anchor="start" font-size="14" fill="#495057"><tspan x="1000" y="359">9. save results</tspan></text>
+<polyline points="1205,380 860,465" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1000" text-anchor="start" font-size="14" fill="#495057"><tspan x="1000" y="444">7. RAG search</tspan></text>
+<polyline points="1205,490 860,505" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1000" text-anchor="start" font-size="14" fill="#495057"><tspan x="1000" y="514">embeddings</tspan></text>
+<polyline points="1485,310 1580,255" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1488" text-anchor="start" font-size="14" fill="#495057"><tspan x="1488" y="269">8. LLM calls</tspan></text>
+<polyline points="1485,365 1580,395" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="1490" text-anchor="start" font-size="14" fill="#495057"><tspan x="1490" y="336">10. comments</tspan><tspan x="1490" y="353.5">+ Check Run</tspan></text>
+<polyline points="1685,360 1685,290" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="900" text-anchor="start" font-size="14" fill="#868e96"><tspan x="900" y="604">Webhooks return instantly;</tspan><tspan x="900" y="621.5">AI work happens in workers</tspan></text>
+<text x="1180" text-anchor="start" font-size="14" fill="#868e96"><tspan x="1180" y="604">Retries (3x) with backoff,</tspan><tspan x="1180" y="621.5">then → *.dlq topics</tspan></text>
+<text x="40" text-anchor="start" font-size="14" fill="#868e96"><tspan x="40" y="529">Clerk · GitHub App tokens</tspan></text>
+<text x="40" text-anchor="start" font-size="15" fill="#c92a2a"><tspan x="40" y="635">Red numbers = order of one PR review (1 → 11). Grey = background jobs.</tspan></text>
+<text x="40" text-anchor="start" font-size="28" fill="#1e1e1e"><tspan x="40" y="-2">CodeGuard AI — System Architecture</tspan></text>
+</svg>

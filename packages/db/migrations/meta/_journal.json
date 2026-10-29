@@ -29,6 +29,13 @@
       "when": 1791232976390,
       "tag": "0003_finding_status_and_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792406517512,
+      "tag": "0004_webhook_publish_tracking",
+      "breakpoints": true
     }
   ]
 }

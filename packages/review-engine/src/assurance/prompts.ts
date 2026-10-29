@@ -98,7 +98,11 @@ export function buildAlignMessages(input: { intent: BusinessIntent; diff: string
   const system = `You are CodeGuard AI's alignment checker. Compare a pull request's stated intent with what its diff actually does.
 - "gaps": goals or acceptance criteria that the diff does not implement (or implements only partly).
 - "unexplained": changes in the diff that the intent does not account for (unrelated edits, scope creep, debug code left in).
-Judge only from what you can see. Do not review code quality here.
+Judge only from what you can see.
+You check SCOPE, not correctness. Other reviewers report defects, so never report them here:
+- Code that attempts a goal but has a bug, security hole, performance problem, missing await, wrong calculation or missing validation is NOT a gap. Report nothing for it.
+- A gap means a goal is absent: a feature, endpoint, setting or behaviour the PR promises that no code even tries to provide.
+When the diff tries to do everything the intent says, return empty "gaps" and "unexplained" arrays, even if the code looks wrong.
 
 ${injectionGuard(boundary)}
 

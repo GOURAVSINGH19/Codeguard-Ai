@@ -1,0 +1,28 @@
+{
+  "id": "sec-admin-assignment",
+  "title": "Admin-only middleware",
+  "body": "Protects the /admin routes.",
+  "tags": [
+    "security",
+    "auth"
+  ],
+  "files": [
+    {
+      "filename": "src/middleware/auth.ts",
+      "status": "added",
+      "patch": "@@ -0,0 +1,10 @@\n+import type { Request, Response, NextFunction } from \"express\";\n+import { verifySession } from \"../auth/session\";\n+\n+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {\n+  const session = await verifySession(req.cookies.session);\n+  if (session.role = \"admin\") {\n+    return next();\n+  }\n+  res.status(403).json({ error: \"forbidden\" });\n+}"
+    }
+  ],
+  "expected": [
+    {
+      "file": "src/middleware/auth.ts",
+      "lines": [
+        6,
+        6
+      ],
+      "category": "security",
+      "minSeverity": "high",
+      "note": "assignment instead of comparison: every user is admin"
+    }
+  ]
+}
