@@ -1,32 +1,31 @@
-import { bigint, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, bigint, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 
-export const installationStatusEnum = pgEnum("installation_status", [
-  "active",
-  "suspended",
-  "deleted",
-]);
-
-export const githubInstallations = pgTable("github_installations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  installationId: bigint("installation_id", { mode: "number" }).notNull().unique(),
-  githubAppId: bigint("github_app_id", { mode: "number" }).notNull(),
-  accountId: bigint("account_id", { mode: "number" }).notNull(),
-  accountLogin: text("account_login").notNull(),
-  accountType: text("account_type").notNull(), // "User" | "Organization"
-  accountAvatarUrl: text("account_avatar_url"),
-  /**
-   * Clerk user id of the person who installed the app (verified in the
-   * install callback). Text, not a users.id FK: every route authenticates
-   * with Clerk ids, and a uuid column could never hold one.
-   */
-  userId: text("user_id"),
-  status: installationStatusEnum("status").default("active").notNull(),
-  permissions: jsonb("permissions"),
-  events: jsonb("events"),
-  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+/** One row per GitHub App installation (a user or org that installed CodeGuard). */
+export const githubInstallations = pgTable(
+  "github_installations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // GitHub's id for the installation. UNIQUE: the install webhook and the
+    // callback both upsert it, so they must land on the same row.
+    installationId: bigint("installation_id", { mode: "number" }).notNull().unique(),
+    // GitHub's numeric id of the user/org that installed it. Ownership checks
+    // compare ids, never names (names can be renamed and reused).
+    accountId: bigint("account_id", { mode: "number" }).notNull(),
+    accountLogin: text("account_login").notNull(),
+    accountType: text("account_type").notNull(), // "User" | "Organization"
+    accountAvatarUrl: text("account_avatar_url"),
+    // Clerk user id of whoever installed it (set by the verified callback).
+    ownerUserId: text("owner_user_id"),
+    status: text("status", { enum: ["active", "suspended", "deleted"] })
+      .notNull()
+      .default("active"),
+    permissions: jsonb("permissions").$type<Record<string, string>>().notNull().default({}),
+    events: jsonb("events").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("github_installations_owner_idx").on(t.ownerUserId)],
+);
 
 export type GithubInstallation = typeof githubInstallations.$inferSelect;
 export type NewGithubInstallation = typeof githubInstallations.$inferInsert;

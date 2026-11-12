@@ -1,92 +1,71 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
-import { db, githubInstallations, pullRequests, repositories, reviews, and, desc, eq, inArray } from "@codeguard/db";
-import { GitHubAppService } from "@/services/GitHubAppService";
-import { GitHubService } from "@/services/GitHubService";
-import { handleApiError, intParam, jsonError } from "@/lib/api";
+import { db, reviews, and, eq, inArray, desc } from "@codeguard/db";
+import { installationOctokit } from "@/server/github-app";
+import { intParam, requireUserId, withErrors } from "@/server/http";
+import { requireUserRepo } from "@/server/repo-access";
+import { toRepoJson } from "@/server/serializers";
+
+type Ctx = { params: Promise<{ owner: string; repo: string }> };
+
+const PER_PAGE = 20;
 
 /**
- * GET /api/github/app/repositories/:owner/:repo/pulls — open pull requests of
- * a repository the user's GitHub App installation was granted, each with its
- * latest CodeGuard review (if any).
+ * GET /api/github/app/repositories/:owner/:repo/pulls?page=1
  *
- * Read through the installation token, so it works without the user's own
- * GitHub OAuth token and only for repos picked during install.
+ * Open PRs come live from GitHub (through the installation token); each is
+ * joined with its latest review from our DB. A review is "outdated" when it
+ * looked at an older commit than the PR's current head.
  *
- *   ?page=1&perPage=30   pagination (GitHub's)
+ * Response: { repo, pulls: Pull[], hasMore } (see RepoPulls.tsx)
  */
-export async function GET(req: Request, { params }: { params: Promise<{ owner: string; repo: string }> }) {
-  try {
-    const { userId } = await auth();
-    if (!userId) return jsonError(401, "Unauthorized");
+export const GET = withErrors(async (req: Request, { params }: Ctx) => {
+  const userId = await requireUserId();
+  const { owner, repo: name } = await params;
+  const repo = await requireUserRepo(userId, owner, name);
+  const page = intParam(new URL(req.url).searchParams.get("page"), 1);
 
-    const { owner, repo } = await params;
-    const url = new URL(req.url);
-    const page = intParam(url.searchParams.get("page"), 1, 1, 1_000);
-    const perPage = intParam(url.searchParams.get("perPage"), 30, 1, 100);
+  const octokit = await installationOctokit(repo.installationId);
+  const { data: prs } = await octokit.rest.pulls.list({
+    owner: repo.owner,
+    repo: repo.name,
+    state: "open",
+    sort: "updated",
+    direction: "desc",
+    per_page: PER_PAGE,
+    page,
+  });
 
-    const [row] = await db
-      .select({
-        id: repositories.id,
-        fullName: repositories.fullName,
-        owner: repositories.owner,
-        name: repositories.name,
-        private: repositories.isPrivate,
-        htmlUrl: repositories.htmlUrl,
-        autoReviewEnabled: repositories.autoReviewEnabled,
-        installationId: githubInstallations.installationId,
-      })
-      .from(repositories)
-      .innerJoin(githubInstallations, eq(repositories.installationId, githubInstallations.id))
-      .where(
-        and(
-          eq(repositories.fullName, `${owner}/${repo}`),
-          eq(repositories.status, "active"),
-          eq(githubInstallations.userId, userId),
-          eq(githubInstallations.status, "active")
-        )
-      )
-      .limit(1);
-    if (!row) return jsonError(404, "Repository not found or not granted to the GitHub App");
-
-    const octokit = await GitHubAppService.fromEnv().createInstallationOctokit(Number(row.installationId));
-    const pulls = await new GitHubService(octokit).listOpenPRs(row.owner, row.name, { page, perPage });
-
-    // Latest review per PR number (newest first, first one wins).
-    const latest = new Map<number, { id: string; status: string; score: number | null; headSha: string | null; createdAt: Date }>();
-    if (pulls.length) {
-      const found = await db
-        .select({
-          prNumber: pullRequests.prNumber,
-          id: reviews.id,
-          status: reviews.status,
-          score: reviews.score,
-          headSha: reviews.headSha,
-          createdAt: reviews.createdAt,
-        })
-        .from(reviews)
-        .innerJoin(pullRequests, eq(reviews.pullRequestId, pullRequests.id))
-        .where(and(eq(pullRequests.repositoryId, row.id), inArray(pullRequests.prNumber, pulls.map((p) => p.number))))
-        .orderBy(desc(reviews.createdAt));
-      for (const { prNumber, ...r } of found) if (!latest.has(prNumber)) latest.set(prNumber, r);
-    }
-
-    return NextResponse.json({
-      repo: { fullName: row.fullName, owner: row.owner, name: row.name, private: row.private, htmlUrl: row.htmlUrl ?? `https://github.com/${row.fullName}`, autoReviewEnabled: row.autoReviewEnabled },
-      pulls: pulls.map((p) => {
-        const r = latest.get(p.number);
-        return {
-          ...p,
-          review: r
-            ? { id: r.id, status: r.status, score: r.score, createdAt: r.createdAt, outdated: !!r.headSha && r.headSha !== p.headSha }
-            : null,
-        };
-      }),
-      page,
-      perPage,
-      hasMore: pulls.length === perPage,
-    });
-  } catch (err) {
-    return handleApiError(err, "GET /api/github/app/repositories/[owner]/[repo]/pulls");
+  // Latest review per PR number (rows come newest first; keep the first we see).
+  const latest = new Map<number, typeof reviews.$inferSelect>();
+  if (prs.length) {
+    const rows = await db
+      .select()
+      .from(reviews)
+      .where(and(eq(reviews.repoFullName, repo.fullName), inArray(reviews.prNumber, prs.map((p) => p.number))))
+      .orderBy(desc(reviews.createdAt));
+    for (const r of rows) if (!latest.has(r.prNumber)) latest.set(r.prNumber, r);
   }
-}
+
+  const pulls = prs.map((pr) => {
+    const review = latest.get(pr.number);
+    return {
+      number: pr.number,
+      title: pr.title,
+      authorLogin: pr.user?.login ?? "ghost",
+      headBranch: pr.head.ref,
+      baseBranch: pr.base.ref,
+      htmlUrl: pr.html_url,
+      createdAt: pr.created_at,
+      review: review
+        ? {
+            id: review.id,
+            status: review.status,
+            score: review.score,
+            createdAt: review.createdAt.toISOString(),
+            outdated: review.headSha !== pr.head.sha,
+          }
+        : null,
+    };
+  });
+
+  return Response.json({ repo: toRepoJson(repo), pulls, hasMore: prs.length === PER_PAGE });
+});

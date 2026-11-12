@@ -5,36 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1789238751383,
-      "tag": "0000_furry_azazel",
+      "when": 1794510386040,
+      "tag": "0000_init",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1789852150969,
-      "tag": "0001_cloudy_the_fury",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1790418746952,
-      "tag": "0002_idempotency_and_install_owner",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1791232976390,
-      "tag": "0003_finding_status_and_recovery",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792406517512,
-      "tag": "0004_webhook_publish_tracking",
+      "when": 1794512069486,
+      "tag": "0001_installation_account_and_repo_details",
       "breakpoints": true
     }
   ]

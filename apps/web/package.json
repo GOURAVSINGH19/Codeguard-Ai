@@ -7,28 +7,23 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@base-ui/react": "^1.8.0",
     "@clerk/nextjs": "^7.9.2",
     "@codeguard/config": "workspace:*",
     "@codeguard/db": "workspace:*",
-    "@codeguard/kafka": "workspace:*",
-    "@codeguard/review-engine": "workspace:*",
-    "@codeguard/types": "workspace:*",
-    "@octokit/auth-app": "^7.0.0",
     "@phosphor-icons/react": "^2.1.10",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
-    "drizzle-orm": "^0.45.2",
     "next": "16.3.8",
     "octokit": "^5.0.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "^2.12.0",
-    "tw-animate-css": "^1.4.0",
-    "zod": "^4.6.2"
+    "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -40,7 +35,8 @@
     "eslint-config-next": "16.3.8",
     "shadcn": "^4.21.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "packageManager": "pnpm@10.12.4"
 }

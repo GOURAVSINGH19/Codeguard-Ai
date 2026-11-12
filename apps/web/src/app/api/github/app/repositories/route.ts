@@ -1,100 +1,66 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
-import { db, githubInstallations, repositories, and, asc, count, eq, ilike, inArray } from "@codeguard/db";
-import { GitHubAppService } from "@/services/GitHubAppService";
-import { handleApiError, intParam, jsonError } from "@/lib/api";
+import { db, repositories, and, eq, inArray, sql, count, asc } from "@codeguard/db";
+import { intParam, requireUserId, withErrors } from "@/server/http";
+import { activeInstallationIds } from "@/server/ownership";
+import { syncInstallationRepositories } from "@/server/installation-sync";
+import { toRepoJson } from "@/server/serializers";
 
 /**
- * GET /api/github/app/repositories — repositories the user's GitHub App
- * installations can access (i.e. what was granted on GitHub), not every repo
- * the user can see.
+ * GET /api/github/app/repositories?page=1&pageSize=20&q=api&filter=all|enabled&sync=1
  *
- *   ?page=1&pageSize=20       pagination
- *   ?q=text                   filter by full name
- *   ?filter=all|enabled       only repos with auto-review on
- *   ?sync=1                   refresh the list from GitHub first
+ * Repos the user's active installations grant, read from OUR table (fast, no
+ * GitHub call per page view). ?sync=1 refreshes the table from GitHub first;
+ * the UI sends it on the first load and on "Sync from GitHub".
+ *
+ * Response: { repos, total, counts: { all, enabled }, hasMore }
  */
-export async function GET(req: Request) {
-  try {
-    const { userId } = await auth();
-    if (!userId) return jsonError(401, "Unauthorized");
+export const GET = withErrors(async (req: Request) => {
+  const userId = await requireUserId();
+  const params = new URL(req.url).searchParams;
+  const page = intParam(params.get("page"), 1);
+  const pageSize = intParam(params.get("pageSize"), 20, 100);
+  const q = params.get("q")?.trim().toLowerCase() ?? "";
+  const filter = params.get("filter") === "enabled" ? "enabled" : "all";
 
-    const url = new URL(req.url);
-    const page = intParam(url.searchParams.get("page"), 1, 1, 1_000);
-    const pageSize = intParam(url.searchParams.get("pageSize"), 20, 1, 100);
-    const q = url.searchParams.get("q")?.trim().slice(0, 100) || undefined;
-    const onlyEnabled = url.searchParams.get("filter") === "enabled";
-
-    const installs = await db
-      .select({ id: githubInstallations.id, installationId: githubInstallations.installationId, accountLogin: githubInstallations.accountLogin })
-      .from(githubInstallations)
-      .where(and(eq(githubInstallations.userId, userId), eq(githubInstallations.status, "active")));
-
-    if (installs.length === 0) {
-      return NextResponse.json({ repos: [], page, pageSize, total: 0, totalPages: 1, hasMore: false, counts: { all: 0, enabled: 0 } });
-    }
-
-    // Pull the current grant from GitHub so repos added/removed there show up
-    // even if the installation_repositories webhook was missed.
-    // Best-effort: on failure we still return what's stored.
-    if (url.searchParams.get("sync") === "1") {
-      await Promise.all(
-        installs.map(async (i) => {
-          try {
-            await GitHubAppService.fromEnv().syncInstallationRepositories(Number(i.installationId));
-          } catch (err) {
-            console.warn(`[GET /api/github/app/repositories] sync failed for ${i.installationId}:`, (err as Error).message);
-          }
-        })
-      );
-    }
-
-    const base = and(
-      inArray(repositories.installationId, installs.map((i) => i.id)),
-      eq(repositories.status, "active")
-    );
-    const where = and(
-      base,
-      q ? ilike(repositories.fullName, `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`) : undefined,
-      onlyEnabled ? eq(repositories.autoReviewEnabled, true) : undefined
-    );
-
-    const [rows, [{ total }], [{ all }], [{ enabled }]] = await Promise.all([
-      db
-        .select()
-        .from(repositories)
-        .where(where)
-        .orderBy(asc(repositories.fullName))
-        .limit(pageSize)
-        .offset((page - 1) * pageSize),
-      db.select({ total: count() }).from(repositories).where(where),
-      db.select({ all: count() }).from(repositories).where(base),
-      db.select({ enabled: count() }).from(repositories).where(and(base, eq(repositories.autoReviewEnabled, true))),
-    ]);
-
-    const loginByInstall = new Map(installs.map((i) => [i.id, i.accountLogin]));
-
-    return NextResponse.json({
-      repos: rows.map((r) => ({
-        id: r.githubRepoId,
-        fullName: r.fullName,
-        owner: r.owner,
-        name: r.name,
-        private: r.isPrivate,
-        language: r.language,
-        description: r.description,
-        htmlUrl: r.htmlUrl ?? `https://github.com/${r.fullName}`,
-        autoReviewEnabled: r.autoReviewEnabled,
-        account: r.installationId ? loginByInstall.get(r.installationId) ?? null : null,
-      })),
-      page,
-      pageSize,
-      total: Number(total),
-      totalPages: Math.max(1, Math.ceil(Number(total) / pageSize)),
-      hasMore: page * pageSize < Number(total),
-      counts: { all: Number(all), enabled: Number(enabled) },
-    });
-  } catch (err) {
-    return handleApiError(err, "GET /api/github/app/repositories");
+  const installationIds = await activeInstallationIds(userId);
+  if (installationIds.length === 0) {
+    return Response.json({ repos: [], total: 0, counts: { all: 0, enabled: 0 }, hasMore: false });
   }
-}
+
+  if (params.has("sync")) {
+    // One failing installation shouldn't hide the others' repos.
+    await Promise.allSettled(installationIds.map((id) => syncInstallationRepositories(id)));
+  }
+
+  const visible = and(inArray(repositories.installationId, installationIds), eq(repositories.active, true));
+  const matching = and(
+    visible,
+    q ? sql`lower(${repositories.fullName}) like ${`%${q.replace(/[%_\\]/g, "\\$&")}%`}` : undefined,
+  );
+  const listed = and(matching, filter === "enabled" ? eq(repositories.autoReviewEnabled, true) : undefined);
+
+  const [rows, [totals], [allCounts]] = await Promise.all([
+    db
+      .select()
+      .from(repositories)
+      .where(listed)
+      .orderBy(asc(repositories.fullName))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ n: count() }).from(repositories).where(listed),
+    // Tab counts ("All" / "Auto-review on") follow the search box but not the tab itself.
+    db
+      .select({
+        all: count(),
+        enabled: sql<number>`count(*) filter (where ${repositories.autoReviewEnabled})`.mapWith(Number),
+      })
+      .from(repositories)
+      .where(matching),
+  ]);
+
+  return Response.json({
+    repos: rows.map(toRepoJson),
+    total: totals.n,
+    counts: { all: allCounts.all, enabled: allCounts.enabled },
+    hasMore: page * pageSize < totals.n,
+  });
+});

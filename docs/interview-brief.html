@@ -1,0 +1,325 @@
+<title>CodeGuard Interview Brief</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a single reading column like a reviewer's checklist; sections keyed to the order an interview usually goes. */
+:root {
+  --bg: #f6f7f4;
+  --surface: #ffffff;
+  --fg: #1d2420;
+  --muted: #5a665f;
+  --line: #d9ded8;
+  --accent: #1f6f54;
+  --accent-soft: #e2efe9;
+  --warn: #9a5b00;
+  --warn-soft: #fbefdc;
+  --crit: #a3322a;
+  --code-bg: #eef1ec;
+  --display: "Fraunces", Georgia, serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131815; --surface: #1b211d; --fg: #e4e9e5; --muted: #9aa69f; --line: #2e3631;
+    --accent: #6fcfa6; --accent-soft: #1f3129; --warn: #f0b860; --warn-soft: #33281a; --crit: #f08a80; --code-bg: #222a25;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131815; --surface: #1b211d; --fg: #e4e9e5; --muted: #9aa69f; --line: #2e3631;
+  --accent: #6fcfa6; --accent-soft: #1f3129; --warn: #f0b860; --warn-soft: #33281a; --crit: #f08a80; --code-bg: #222a25;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+main { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 2.8rem); font-weight: 700; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 500; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.lede { color: var(--muted); font-size: 1.1rem; }
+code, .mono { font-family: var(--mono); font-size: 0.85em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-family: var(--mono); font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+
+.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.day { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.day .when { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+.day ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+blockquote { margin: 0; padding: 18px 22px; background: var(--surface); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; display: flex; flex-direction: column; gap: 12px; }
+blockquote p { max-width: none; }
+.say { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+
+ol.flow { list-style: none; margin: 0; padding: 0; counter-reset: step; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+ol.flow li { counter-increment: step; display: grid; grid-template-columns: 2.2rem 1fr; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+ol.flow li::before { content: counter(step, decimal-leading-zero); font-family: var(--mono); color: var(--accent); font-size: 0.85rem; padding-top: 2px; }
+ol.flow li > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+ol.flow .why { color: var(--muted); font-size: 0.95rem; }
+ol.flow .file { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); font-weight: 600; }
+
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.metric { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.metric b { font-family: var(--display); font-size: 1.9rem; font-variant-numeric: tabular-nums; }
+.metric span { color: var(--muted); font-size: 0.9rem; }
+
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+details + details { margin-top: -6px; }
+summary { cursor: pointer; padding: 12px 16px; font-weight: 600; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "+"; font-family: var(--mono); color: var(--accent); width: 1ch; flex: none; }
+details[open] summary::before { content: "−"; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+details .ans { padding: 0 16px 14px 40px; display: flex; flex-direction: column; gap: 8px; }
+
+.risk { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.risk > div { padding: 12px 16px; border-radius: 8px; background: var(--warn-soft); display: flex; flex-direction: column; gap: 4px; }
+.risk b { color: var(--warn); }
+.fix { border: 1px dashed var(--crit); border-radius: 8px; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
+.fix ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.fix h3 { color: var(--crit); }
+footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (prefers-reduced-motion: no-preference) { details[open] .ans { animation: in .18s ease-out; } @keyframes in { from { opacity: .4; } to { opacity: 1; } } }
+</style>
+
+<main>
+
+<header style="display:flex;flex-direction:column;gap:12px">
+  <span class="eyebrow">Interview · Sunday 2 November 2026</span>
+  <h1>CodeGuard AI, explained by the person who built it</h1>
+  <p class="lede">An AI reviewer for GitHub pull requests. It works out how far a change reaches, pulls in related code, runs three specialist reviewers, has a second model check every finding, and blocks the merge when policy says so.</p>
+  <div class="status">
+    <span class="pill">271 tests passing (26 files)</span>
+    <span class="pill">24 pipeline nodes</span>
+    <span class="pill">Eval: precision 47% → 80% after verifier</span>
+    <span class="pill warn">README badge still says 169</span>
+  </div>
+</header>
+
+<section>
+  <span class="eyebrow">Two days left</span>
+  <h2>How to spend them</h2>
+  <div class="plan">
+    <div class="day">
+      <span class="when">Fri 31 Oct · evening</span>
+      <strong>Learn the story</strong>
+      <ul>
+        <li>Say the 30-second and 2-minute pitch out loud 5 times.</li>
+        <li>Draw the architecture from memory on paper.</li>
+        <li>Fix the README items in the red box below.</li>
+      </ul>
+    </div>
+    <div class="day">
+      <span class="when">Sat 1 Nov</span>
+      <strong>Learn the code</strong>
+      <ul>
+        <li>Open each file in “Follow one PR” and read it.</li>
+        <li>Run <code>pnpm test</code> and one <code>pnpm eval</code> yourself.</li>
+        <li>Answer every question in section 6 without looking.</li>
+      </ul>
+    </div>
+    <div class="day">
+      <span class="when">Sun 2 Nov · morning</span>
+      <strong>Rehearse</strong>
+      <ul>
+        <li>Numbers table and the weak spots only.</li>
+        <li>Have the repo, demo GIF and this page open.</li>
+        <li>Pick one bug story to tell (section 7).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">1 · The pitch</span>
+  <h2>Say this first</h2>
+  <blockquote>
+    <span class="say">30 seconds</span>
+    <p>“CodeGuard AI reviews GitHub pull requests. GitHub sends a webhook, my Next.js app verifies it, saves it to Postgres and puts it on Kafka. Workers then run a staged review: they work out which files depend on the change using an import graph, pull related code with vector search, run quality, security and testing reviewers in parallel, and use a second model to check every finding. The result is inline comments and a Check Run that can block the merge. Most of my effort went into making it fail safely.”</p>
+  </blockquote>
+  <blockquote>
+    <span class="say">2 minutes (add these after the 30 seconds)</span>
+    <p>“The webhook handler only verifies, saves and publishes, because GitHub waits about ten seconds and a review takes minutes. Saving before publishing is the transactional outbox pattern: if Kafka is down, a sweeper publishes the row later. That means a message can arrive twice, so every consumer is idempotent. The review worker claims the review with a unique index on PR, commit and requester.”</p>
+    <p>“For context, the worker downloads a read-only snapshot of the exact commit. Tree-sitter extracts imports, and a BFS over reverse edges finds the blast radius, so a one-line change to a shared utility gets more attention than 200 lines in a test. Code chunks are embedded into pgvector so the reviewer can cite real files.”</p>
+    <p>“Every model answer is parsed with Zod and gets one repair attempt. The verifier marks each finding confirmed, uncertain or rejected, and only confirmed findings can fail the check. I built an eval harness with planted bugs: the verifier raised precision from 47% to 80% with recall at 100%.”</p>
+  </blockquote>
+</section>
+
+<section>
+  <span class="eyebrow">2 · Architecture</span>
+  <h2>Draw this on the whiteboard</h2>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  GH[GitHub PR] -- webhook --> WEB["Next.js on Vercel<br/>HMAC verify · dedupe"]
+  WEB -- 1 save first --> OB[(webhook_events<br/>outbox)]
+  WEB -- 2 publish --> K{{Kafka + DLQ}}
+  OB -. sweeper .-> K
+  K --> WP[webhookProcessor<br/>review / index / ignore]
+  WP --> K
+  K --> RP[reviewProcessor<br/>24-node pipeline]
+  K --> IX[indexers<br/>AST chunk + embed]
+  IX --> VEC[(pgvector)]
+  RP -- RAG --> VEC
+  RP -- LLM --> LLM[Groq / OpenAI / Anthropic]
+  RP --> DB[(reviews + findings)]
+  RP -- comments + Check Run --> GH
+  DB --> UI[Dashboard · SSE progress]
+</pre>
+  </div>
+  <p>Monorepo with pnpm workspaces: <code>apps/web</code> (UI + thin API routes), <code>apps/workers</code> (Kafka consumers), and shared packages <code>review-engine</code>, <code>kafka</code>, <code>db</code>, <code>config</code>, <code>types</code>. One reason for the monorepo: if an event shape changes, TypeScript breaks both web and workers at compile time.</p>
+</section>
+
+<section>
+  <span class="eyebrow">3 · Follow one PR</span>
+  <h2>What happens, and the file to open</h2>
+  <ol class="flow">
+    <li><div><strong>Webhook arrives.</strong> HMAC-SHA256 over the <em>raw</em> body, compared with <code>timingSafeEqual</code>. No secret configured means reject.<span class="why">Re-serialised JSON changes the bytes; a normal compare leaks timing.</span><span class="file">apps/web/src/lib/webhook-signature.ts · github-webhook.ts</span></div></li>
+    <li><div><strong>Dedupe and save.</strong> <code>github_delivery_id</code> is UNIQUE. A redelivery of a <em>failed</em> event is allowed to run again.<span class="why">GitHub can deliver twice and doesn't retry on its own.</span><span class="file">packages/db/schema/webhook-events.ts</span></div></li>
+    <li><div><strong>Publish to Kafka</strong>, key <code>owner/repo#number</code>, then reply 200.<span class="why">Same key, same partition, so one PR's pushes stay in order.</span><span class="file">packages/kafka/src/topics.ts · client.ts</span></div></li>
+    <li><div><strong>Route.</strong> <code>decideRoute()</code> is a pure function returning review, index, index-full or ignored.<span class="why">Pure, so every branch is unit-tested without a database.</span><span class="file">apps/workers/src/jobs/webhookProcessor.ts</span></div></li>
+    <li><div><strong>Consume safely.</strong> Bad JSON or schema goes straight to DLQ. Errors retry 3 times (2 s, 4 s), then DLQ. Heartbeat every 3 s.<span class="why">One poison message can't block a partition; slow LLM calls don't trigger a rebalance.</span><span class="file">apps/workers/src/queue/consumer.ts</span></div></li>
+    <li><div><strong>Claim the review.</strong> Partial unique index on (PR, head SHA, requester).<span class="why">At-least-once delivery, so duplicates must do no work.</span><span class="file">apps/workers/src/pipeline/nodes/prepare.ts</span></div></li>
+    <li><div><strong>Build context.</strong> Config from the <em>base</em> commit, snapshot, intent, blast radius (BFS, depth 3), RAG, definitions and call sites.<span class="why">Reading config from base stops a PR from weakening its own rules.</span><span class="file">analyzers/DependencyGraph.ts · PRDiffSelector.ts · rag/RAGService.ts</span></div></li>
+    <li><div><strong>Three stages.</strong> What changed → how risky → review (quality ∥ security ∥ testing). Every answer goes through Zod with one repair try.<span class="why">Specialists with narrow prompts beat one giant prompt.</span><span class="file">pipeline/nodes/stages.ts · review-engine/src/assurance/</span></div></li>
+    <li><div><strong>Dedupe and verify.</strong> Merge near-duplicates, verify up to 25 findings. Rejected is removed, uncertain drops one severity.<span class="why">False positives teach developers to ignore the bot.</span><span class="file">review-engine/src/verify.ts · assurance/findings.ts</span></div></li>
+    <li><div><strong>Decide and publish.</strong> Scorecard, then <code>.codeguard.yml</code> policy decides pass/fail. Save to DB first, then post comments and the Check Run.<span class="why">The gate is code, not the model. Saving first means a GitHub failure doesn't lose the AI work or double-post.</span><span class="file">pipeline/nodes/finalize.ts · review-engine/src/github.ts</span></div></li>
+  </ol>
+</section>
+
+<section>
+  <span class="eyebrow">4 · Numbers</span>
+  <h2>Know these cold</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>What</th><th>Value</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>Pipeline nodes</td><td class="num">24</td><td>README says “25-step” because risk assessment runs inside stage 2. Say “24 nodes, 25 steps”.</td></tr>
+        <tr><td>Kafka topics</td><td class="num">5 + DLQs</td><td>webhook.received, review.requested, review.completed, index.full, index.incremental</td></tr>
+        <tr><td>Partitions</td><td class="num">3 / 1</td><td>3 per main topic, 1 per DLQ, replication factor 1</td></tr>
+        <tr><td>Consumer retries</td><td class="num">3 tries</td><td>backoff min(30 s, 1 s × 2ⁿ), heartbeat every 3 s</td></tr>
+        <tr><td>Outbox sweeper</td><td class="num">60 s</td><td>resends “processing” after 10 min, gives up after 5 attempts</td></tr>
+        <tr><td>Recovery sweeper</td><td class="num">≤ 3</td><td>stuck in-progress reviews re-queued at most 3 times</td></tr>
+        <tr><td>Blast radius depth</td><td class="num">3 hops</td><td>BFS over reverse import edges</td></tr>
+        <tr><td>Embeddings</td><td class="num">1536 dims</td><td>text-embedding-3-small, IVFFlat index, cosine</td></tr>
+        <tr><td>Verifier cap</td><td class="num">25</td><td>findings verified per review</td></tr>
+        <tr><td>Temperature</td><td class="num">0.2</td><td>OpenAI-compatible providers (Anthropic: none set)</td></tr>
+        <tr><td>Tree-sitter languages</td><td class="num">7</td><td>TS/JS, Python, Go, Java, Rust, C++</td></tr>
+        <tr><td>DB tables</td><td class="num">8</td><td>Drizzle schema, 5 migrations</td></tr>
+        <tr><td>Tests</td><td class="num">271</td><td>26 files, Vitest, ~7 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Eval results (Groq, openai/gpt-oss-120b)</h3>
+  <div class="metrics">
+    <div class="metric"><b>47% → 80%</b><span>precision, before → after verifier</span></div>
+    <div class="metric"><b>100%</b><span>recall (8 of 8 planted bugs)</span></div>
+    <div class="metric"><b>0</b><span>blocking false positives</span></div>
+    <div class="metric"><b>9 of 11</b><span>cases scored; 2 degraded by rate limits</span></div>
+  </div>
+  <p>Be precise if asked: the earlier full 11-case run gave 50% → 57% precision and 89% recall. The eval set is 13 small hand-written cases, so these numbers show the verifier helps; they are not a benchmark.</p>
+</section>
+
+<section>
+  <span class="eyebrow">5 · Decisions</span>
+  <h2>Why X and not Y</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Chose</th><th>Over</th><th>Because</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka + outbox</td><td>Calling the review from the webhook</td><td>Webhook must answer in ~10 s, review takes minutes. Outbox means Kafka downtime loses nothing. Admit SQS or a Postgres queue would work at this scale; Kafka gave per-PR ordering and replay.</td></tr>
+        <tr><td>Import graph ranking</td><td><code>diff.slice(0, 12000)</code></td><td>Truncation cuts mid-function. Ranking spends the context budget on the code most likely to break.</td></tr>
+        <tr><td>pgvector in Postgres</td><td>Pinecone / separate vector DB</td><td>One system, joins, filter by repo, no extra bill.</td></tr>
+        <tr><td>AST chunks</td><td>Fixed-size chunks</td><td>A chunk is a whole function or class; half a function is a bad search result.</td></tr>
+        <tr><td>Verifier model</td><td>Trusting the reviewer</td><td>Reviewers over-report. Measured gain: precision 47% → 80%.</td></tr>
+        <tr><td>Zod on model output</td><td>Trusting JSON mode</td><td>Model output is untrusted input; a made-up severity never reaches the DB.</td></tr>
+        <tr><td>GitHub App</td><td>Personal access token</td><td>Narrow permissions, tokens expire in ~1 hour, works while the user is offline.</td></tr>
+        <tr><td>SSE</td><td>WebSockets</td><td>Progress only flows server → browser; SSE is plain HTTP and works on Vercel.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">6 · Likely questions</span>
+  <h2>Short answers</h2>
+  <div>
+    <details><summary>Is it exactly-once or at-least-once?</summary><div class="ans"><p>At-least-once with idempotent consumers. Exactly-once can't span Kafka, Postgres and GitHub. Dedup happens at three layers: webhook delivery ID, the review claim index, and saving before posting.</p></div></details>
+    <details><summary>What happens if a worker crashes mid-review?</summary><div class="ans"><p>The Kafka offset isn't committed, so the message is redelivered. Every pipeline node also updates a heartbeat on the review row; if it goes quiet for 15 minutes, the recovery sweeper re-queues it, up to 3 times.</p></div></details>
+    <details><summary>How do you stop prompt injection from the PR?</summary><div class="ans"><p>PR text and code go in the user message inside a random tag like <code>&lt;untrusted-3f9a…&gt;</code>, and the system prompt says it is data. The model has no tools and can't approve anything. Policy is read from the base commit. Pass/fail is decided by code.</p></div></details>
+    <details><summary>How do you know the reviews are any good?</summary><div class="ans"><p>The eval harness in <code>apps/workers/evals</code>: PRs with planted bugs run through the real pipeline nodes, scored on precision and recall, before and after the verifier. CI fails if precision or recall drops more than 5 points from the baseline.</p><p>The eval also found a real problem: the intent checker repeated real bugs as vague file-level comments. I fixed it and re-measured.</p></div></details>
+    <details><summary>Why does RAG matter if you already have the diff?</summary><div class="ans"><p>The diff hides callers and contracts. In the cents-vs-dollars case the reviewer cited “formatMoney expects a dollar amount” and a call site in <code>checkout.js</code>; neither fact was in the diff. RAG is optional: if embeddings fail, the review runs with less context.</p></div></details>
+    <details><summary>How would you scale to 10,000 PRs a day?</summary><div class="ans"><p>More partitions and worker replicas in the same consumer group, 3 brokers with replication factor 3, retry topics instead of in-handler sleeps, HNSW instead of IVFFlat, cache installation tokens, and debounce rapid pushes to the same PR. The LLM provider's rate limit becomes the real bottleneck, so add a per-tenant token budget.</p></div></details>
+    <details><summary>How would you cut the cost in half?</summary><div class="ans"><p>Skip the testing reviewer when no test files changed (already done), send only commits since the last review on <code>synchronize</code> (already done), use a small model for intent and stage 1 and a strong one only for stage 3 and the verifier, and cache prompts.</p></div></details>
+    <details><summary>How is this different from CodeRabbit?</summary><div class="ans"><p>Same idea, much smaller. What I'd point to is the measured verifier step, blast-radius ranking, and that every gate decision is explainable from policy. I wouldn't claim it is better; it's a project where I owned the whole system end to end.</p></div></details>
+    <details><summary>What would you build next?</summary><div class="ans"><p>Learning from dismissed findings (team memory), cancelling a running review when a new push lands, hybrid search with reranking, and cost-per-review observability.</p></div></details>
+    <details><summary>Did you use AI to write this?</summary><div class="ans"><p>Answer honestly. If you used AI tools, say so, and say what you decided: the outbox, idempotency design, verifier, eval. Then prove it by explaining any file they point at. That's why Saturday is for reading the code.</p></div></details>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">7 · Bug stories</span>
+  <h2>“Tell me about a hard bug”</h2>
+  <p>Pick one and tell it as problem → how you found it → fix → what you learned.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Bug</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td>A webhook that failed once could never be redelivered, because the UNIQUE delivery ID marked the retry as a duplicate.</td><td><code>ON CONFLICT DO UPDATE … WHERE status = 'failed'</code>, so only failed rows reset.</td></tr>
+        <tr><td>On Vercel, fire-and-forget DB writes were lost because the function froze after sending the response.</td><td>Await the insert before replying.</td></tr>
+        <tr><td>The eval showed most false positives came from the intent step repeating real bugs as file-level comments.</td><td>Narrowed the alignment prompt to scope only, then re-ran the eval.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">8 · Weak spots</span>
+  <h2>Say them before they find them</h2>
+  <div class="risk">
+    <div><b>Kafka and workers aren't hosted 24/7.</b><span>Only the web app is on Vercel. The demo video shows the full flow, and <code>docker compose</code> runs it all.</span></div>
+    <div><b>Single broker, replication factor 1.</b><span>Fine for a demo; production needs 3 brokers, RF 3, <code>min.insync.replicas=2</code>.</span></div>
+    <div><b>Retries sleep inside the handler.</b><span>While one message retries, others on that partition wait. Fix: delayed retry topics.</span></div>
+    <div><b>Webhook can exceed 10 s if Kafka is slow.</b><span>Data is safe in the outbox, but GitHub shows a red delivery. Fix: a hard ~3 s timeout on publish.</span></div>
+    <div><b>Small eval set.</b><span>13 hand-written cases. Next step: real bug-fix commits from open-source repos.</span></div>
+    <div><b>No cancellation on new push.</b><span>An outdated review keeps running. Fix: check head SHA between stages and stop early.</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="fix">
+    <h3>Fix in the repo before Sunday</h3>
+    <ul>
+      <li>README badge says <strong>169</strong> tests; <code>pnpm test</code> now reports <strong>271</strong>. An interviewer who runs it will notice.</li>
+      <li>README roadmap lists an “evaluation set” as future work, but <code>apps/workers/evals</code> already exists. Move it to Highlights.</li>
+      <li>Decide whether you say “24 nodes” or “25 steps” and use the same phrase everywhere.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  Deeper material already in the repo: <code>docs/INTERVIEW.md</code> (5-part guide) and <code>docs/INTERVIEW-PREP.md</code> (step-by-step HLD/LLD with edge cases). Every number on this page was checked against the code on 31 October 2026.
+</footer>
+
+</main>
