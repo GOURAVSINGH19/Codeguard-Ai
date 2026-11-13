@@ -15,6 +15,8 @@
     "@clerk/nextjs": "^7.9.2",
     "@codeguard/config": "workspace:*",
     "@codeguard/db": "workspace:*",
+    "@codeguard/kafka": "workspace:*",
+    "@codeguard/review-engine": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",

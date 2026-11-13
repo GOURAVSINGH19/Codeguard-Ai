@@ -1,5 +1,6 @@
 import { db, webhookEvents, eq } from "@codeguard/db";
 import { getEnv } from "@codeguard/config";
+import { publish, TOPICS, WebhookReceived } from "@codeguard/kafka";
 import type { GhInstallation, GhRepo } from "./github-app";
 import { errorResponse } from "./http";
 import {
@@ -16,10 +17,11 @@ import { verifyGitHubSignature } from "./webhook-signature";
  *   1. verify the HMAC signature           → 401 if wrong
  *   2. INSERT into webhook_events (outbox)  → duplicate delivery id = no-op
  *   3. apply quick DB-only updates (installation / repo lists)
- *   4. answer 200, in milliseconds
+ *   4. publish "webhook.received" to Kafka (≤ 3 s), mark the row "published"
+ *   5. answer 200
  *
  * Nothing slow happens here: GitHub gives us 10 s and won't retry on its own.
- * Day 2 adds "publish to Kafka" between 2 and 4; the AI review runs in workers.
+ * The AI review runs in the workers.
  */
 export async function handleGitHubWebhook(req: Request): Promise<Response> {
   try {
@@ -59,7 +61,24 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       await db.update(webhookEvents).set({ error: message }).where(eq(webhookEvents.id, inserted[0].id));
     }
 
-    // Day 2: publish to Kafka here, then mark the row "published".
+    // Hand off to the workers. If Kafka is down, the row stays "received" and the
+    // Day 3 sweeper publishes it later; GitHub still gets its fast 200.
+    try {
+      await publish(
+        TOPICS.webhookReceived,
+        deliveryId,
+        WebhookReceived,
+        { type: "webhook.received", webhookEventId: inserted[0].id, deliveryId, eventType, action },
+        { timeoutMs: 3_000 },
+      );
+      await db
+        .update(webhookEvents)
+        .set({ status: "published", publishedAt: new Date() })
+        .where(eq(webhookEvents.id, inserted[0].id));
+    } catch (err) {
+      console.warn(`[webhook] ${deliveryId} saved but not published (left for the sweeper):`, (err as Error).message);
+    }
+
     return Response.json({ ok: true });
   } catch (err) {
     // e.g. the database is down: 500 makes GitHub show a failed delivery you can redeliver.

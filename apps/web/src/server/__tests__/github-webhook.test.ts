@@ -14,6 +14,13 @@ vi.mock("@codeguard/db", () => ({
 
 vi.mock("@clerk/nextjs/server", () => ({ auth: vi.fn() }));
 
+const publish = vi.fn();
+vi.mock("@codeguard/kafka", () => ({
+  publish: (...args: unknown[]) => publish(...args),
+  TOPICS: { webhookReceived: "codeguard.webhook.received" },
+  WebhookReceived: {},
+}));
+
 vi.mock("../installation-sync", () => ({
   upsertInstallation: vi.fn(),
   upsertRepositories: vi.fn(),
@@ -64,11 +71,23 @@ describe("handleGitHubWebhook", () => {
     expect(res.status).toBe(400);
   });
 
-  it("saves a new event and answers 200", async () => {
+  it("saves a new event, publishes it, marks it published and answers 200", async () => {
+    publish.mockResolvedValue(undefined);
     const res = await handleGitHubWebhook(webhook({ action: "opened" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(returning).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0][3]).toMatchObject({ webhookEventId: "row-1", deliveryId: "delivery-1" });
+    expect(updateWhere).toHaveBeenCalledOnce(); // status = published
+  });
+
+  it("still answers 200 when Kafka is down; the row is left for the sweeper", async () => {
+    publish.mockRejectedValue(new Error("Connection timeout"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await handleGitHubWebhook(webhook({ action: "opened" }));
+    expect(res.status).toBe(200);
+    expect(updateWhere).not.toHaveBeenCalled(); // not marked published
   });
 
   it("treats a redelivery (unique delivery id hit) as a harmless duplicate", async () => {

@@ -11,8 +11,9 @@
     "db:generate": "pnpm --filter @codeguard/db db:generate",
     "db:migrate": "pnpm --filter @codeguard/db db:migrate",
     "db:studio": "pnpm --filter @codeguard/db db:studio",
-    "infra:up": "docker compose up -d",
-    "test": "pnpm -r --if-present test"
+    "infra:up": "docker compose -f docker-compose.yml up -d",
+    "test": "pnpm -r --if-present test",
+    "dev:worker": "pnpm --filter workers dev"
   },
   "keywords": [],
   "author": "",

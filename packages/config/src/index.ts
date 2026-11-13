@@ -23,6 +23,16 @@ const EnvSchema = z.object({
   GITHUB_APP_SLUG: z.string().min(1),
   GITHUB_PRIVATE_KEY: z.string().min(1),
   GITHUB_WEBHOOK_SECRET: z.string().min(16, "use a long random string (16+ chars)"),
+
+  // Day 2: the AI model. Only the chosen provider's key is required (checked in review-engine).
+  LLM_PROVIDER: z.enum(["groq", "openai"]).default("groq"),
+  LLM_MODEL: z.string().min(1).optional(),
+  GROQ_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  // Public URL of the web app, used for "Open the full review" links on GitHub.
+  APP_URL: z.url().optional(),
+  // Token budget for the diff part of the prompt.
+  REVIEW_MAX_DIFF_TOKENS: z.coerce.number().int().min(1000).default(12000),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

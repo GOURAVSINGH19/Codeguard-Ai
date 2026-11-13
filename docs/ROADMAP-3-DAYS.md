@@ -81,6 +81,8 @@ docker-compose.yml     ← Day 1: Postgres (pgvector) + Kafka locally
 
 ## Day 2: Async pipeline, from a saved event to a posted review
 
+📒 Detailed notes with code: [notes/day-2.md](notes/day-2.md)
+
 **Goal by the end of the day:** a PR is opened, Kafka carries the job to a worker, the worker asks an LLM for a review of the diff, saves findings, posts a PR comment, and the dashboard shows it live. The review is simple but works end to end.
 
 ### 2.1 Kafka package + outbox publisher (≈2 h)
@@ -128,6 +130,8 @@ docker-compose.yml     ← Day 1: Postgres (pgvector) + Kafka locally
 ---
 
 ## Day 3: Make it smart, then make it reliable
+
+📒 Detailed notes with code: [notes/day-3.md](notes/day-3.md)
 
 **Goal by the end of the day:** reviews use real repo context, every finding is double-checked, a team policy decides pass/fail, stuck jobs recover by themselves, and the trends page works.
 
