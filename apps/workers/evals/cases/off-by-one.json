@@ -1,0 +1,34 @@
+{
+  "name": "off-by-one",
+  "description": "< becomes <=, so every page returns one item too many (the first item of the next page).",
+  "title": "Fix pagination edge case",
+  "body": "Make sure the last item on a page is included.",
+  "files": [
+    {
+      "path": "src/utils/paginate.ts",
+      "before": [
+        "export function paginate<T>(items: T[], page: number, pageSize: number): T[] {",
+        "  const start = (page - 1) * pageSize;",
+        "  const end = start + pageSize;",
+        "  const out: T[] = [];",
+        "  for (let i = start; i < end && i < items.length; i++) {",
+        "    out.push(items[i]);",
+        "  }",
+        "  return out;",
+        "}"
+      ],
+      "after": [
+        "export function paginate<T>(items: T[], page: number, pageSize: number): T[] {",
+        "  const start = (page - 1) * pageSize;",
+        "  const end = start + pageSize;",
+        "  const out: T[] = [];",
+        "  for (let i = start; i <= end && i < items.length; i++) {",
+        "    out.push(items[i]);",
+        "  }",
+        "  return out;",
+        "}"
+      ]
+    }
+  ],
+  "expected": [{ "file": "src/utils/paginate.ts", "line": 5, "category": "bug" }]
+}

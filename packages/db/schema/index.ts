@@ -3,3 +3,4 @@ export * from "./repositories";
 export * from "./webhook-events";
 export * from "./reviews";
 export * from "./review-findings";
+export * from "./code-index";

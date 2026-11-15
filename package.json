@@ -13,7 +13,8 @@
     "db:studio": "pnpm --filter @codeguard/db db:studio",
     "infra:up": "docker compose -f docker-compose.yml up -d",
     "test": "pnpm -r --if-present test",
-    "dev:worker": "pnpm --filter workers dev"
+    "dev:worker": "pnpm --filter workers dev",
+    "eval": "pnpm --filter workers eval"
   },
   "keywords": [],
   "author": "",

@@ -19,6 +19,10 @@ export const repositories = pgTable(
     autoReviewEnabled: boolean("auto_review_enabled").notNull().default(true),
     // false when the repo is removed from the installation (installation_repositories webhook).
     active: boolean("active").notNull().default(true),
+    // Code index (Day 3): which commit of the default branch is in code_chunks/code_files.
+    defaultBranch: text("default_branch"),
+    indexedSha: text("indexed_sha"),
+    indexedAt: timestamp("indexed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

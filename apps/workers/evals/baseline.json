@@ -1,0 +1,8 @@
+{
+  "model": "groq/openai/gpt-oss-120b",
+  "recall": 1,
+  "precision": 1,
+  "falsePositives": 0,
+  "errors": 0,
+  "tokens": 23980
+}

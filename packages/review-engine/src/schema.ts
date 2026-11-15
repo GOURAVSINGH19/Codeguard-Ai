@@ -39,4 +39,14 @@ export interface Finding {
   source: "ai" | "eslint";
   /** true when GitHub will accept an inline comment on this line. */
   inline: boolean;
+  /** Staged pipeline only: which reviewer found it, and what the verifier concluded. */
+  reviewer?: "quality" | "security" | "testing" | "eslint";
+  verdict?: "confirmed" | "uncertain";
+  confidence?: number;
 }
+
+/** Stage 3 reviewers return only findings; the score is computed by code. */
+export const ReviewerOutput = z.object({
+  findings: z.array(ModelFinding).max(25),
+});
+export type ReviewerOutput = z.infer<typeof ReviewerOutput>;

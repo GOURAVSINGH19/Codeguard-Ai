@@ -2,7 +2,7 @@ import { db, reviews, and, eq, inArray, desc } from "@codeguard/db";
 import { installationOctokit } from "@/server/github-app";
 import { intParam, requireUserId, withErrors } from "@/server/http";
 import { requireUserRepo } from "@/server/repo-access";
-import { toRepoJson } from "@/server/serializers";
+import { toRepoJson, toUiScore } from "@/server/serializers";
 
 type Ctx = { params: Promise<{ owner: string; repo: string }> };
 
@@ -59,7 +59,7 @@ export const GET = withErrors(async (req: Request, { params }: Ctx) => {
         ? {
             id: review.id,
             status: review.status,
-            score: review.score,
+            score: toUiScore(review.score),
             createdAt: review.createdAt.toISOString(),
             outdated: review.headSha !== pr.head.sha,
           }

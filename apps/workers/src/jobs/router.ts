@@ -1,5 +1,5 @@
-import { db, webhookEvents, repositories, githubInstallations, eq } from "@codeguard/db";
-import { publish, prKey, TOPICS, ReviewRequested, type WebhookReceived } from "@codeguard/kafka";
+import { db, webhookEvents, repositories, githubInstallations, eq, inArray } from "@codeguard/db";
+import { publish, prKey, repoKey, TOPICS, ReviewRequested, RepoIndexRequested, type WebhookReceived } from "@codeguard/kafka";
 
 /**
  * The ROUTER: turns "GitHub said something happened" into "this commit needs a review".
@@ -37,12 +37,66 @@ export function decideFromPayload(eventType: string, p: PullRequestPayload): Rou
   };
 }
 
+const ROUTED_EVENTS = new Set(["pull_request", "push", "installation", "installation_repositories"]);
+
+interface IndexPayload {
+  action?: string;
+  ref?: string;
+  after?: string;
+  deleted?: boolean;
+  installation?: { id: number };
+  repository?: { id: number; default_branch?: string };
+  repositories?: Array<{ id: number }>;
+  repositories_added?: Array<{ id: number }>;
+}
+
+/**
+ * Pure: which repos need their code index refreshed because of this event?
+ *   installation.created            → every granted repo (first index)
+ *   installation_repositories.added → the newly added repos
+ *   push to the DEFAULT branch      → that repo, at the pushed commit
+ */
+export function decideIndexFromPayload(
+  eventType: string,
+  p: IndexPayload,
+): { installationId: number; githubRepoIds: number[]; ref: string | null; reason: "installed" | "push" } | null {
+  if (!p.installation) return null;
+  if (eventType === "installation" && p.action === "created") {
+    return { installationId: p.installation.id, githubRepoIds: (p.repositories ?? []).map((r) => r.id), ref: null, reason: "installed" };
+  }
+  if (eventType === "installation_repositories" && p.action === "added") {
+    return { installationId: p.installation.id, githubRepoIds: (p.repositories_added ?? []).map((r) => r.id), ref: null, reason: "installed" };
+  }
+  if (eventType === "push" && p.repository && !p.deleted && p.after && !/^0+$/.test(p.after) &&
+      p.ref === `refs/heads/${p.repository.default_branch}`) {
+    return { installationId: p.installation.id, githubRepoIds: [p.repository.id], ref: p.after, reason: "push" };
+  }
+  return null;
+}
+
+async function requestIndexes(d: NonNullable<ReturnType<typeof decideIndexFromPayload>>): Promise<void> {
+  if (!d.githubRepoIds.length) return;
+  const repos = await db
+    .select({ id: repositories.id, fullName: repositories.fullName, active: repositories.active })
+    .from(repositories)
+    .where(inArray(repositories.githubRepoId, d.githubRepoIds));
+  for (const r of repos.filter((r) => r.active)) {
+    await publish(TOPICS.repoIndexRequested, repoKey(r.id), RepoIndexRequested, {
+      type: "repo.index.requested", repositoryId: r.id, installationId: d.installationId, ref: d.ref, reason: d.reason,
+    });
+    console.info(`[router] index requested: ${r.fullName} (${d.reason})`);
+  }
+}
+
 export async function onWebhookReceived(e: WebhookReceived): Promise<void> {
-  if (e.eventType !== "pull_request") return; // most events need no work; skip without a DB read
+  if (!ROUTED_EVENTS.has(e.eventType)) return; // most events need no work; skip without a DB read
 
   // The message is a pointer; the payload lives in Postgres (the outbox row).
   const [row] = await db.select().from(webhookEvents).where(eq(webhookEvents.id, e.webhookEventId)).limit(1);
   if (!row) throw new Error(`webhook_events row ${e.webhookEventId} not found`);
+
+  const index = decideIndexFromPayload(row.eventType, row.payload as IndexPayload);
+  if (index) return requestIndexes(index);
 
   const decision = decideFromPayload(row.eventType, row.payload as PullRequestPayload);
   if (!decision.review) return;

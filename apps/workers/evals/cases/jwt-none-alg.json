@@ -1,0 +1,27 @@
+{
+  "name": "jwt-none-alg",
+  "description": "A 'harmless' refactor makes JWT verification accept unsigned tokens.",
+  "title": "Make JWT algorithm configurable",
+  "body": "Small refactor so ops can switch algorithms without a deploy.",
+  "files": [
+    {
+      "path": "src/auth/jwt.ts",
+      "before": [
+        "import jwt from \"jsonwebtoken\";",
+        "",
+        "export function verifyToken(token: string, publicKey: string) {",
+        "  return jwt.verify(token, publicKey, { algorithms: [\"RS256\"] });",
+        "}"
+      ],
+      "after": [
+        "import jwt from \"jsonwebtoken\";",
+        "",
+        "export function verifyToken(token: string, publicKey: string) {",
+        "  const alg = (process.env.JWT_ALG ?? \"none\") as jwt.Algorithm;",
+        "  return jwt.verify(token, publicKey, { algorithms: [alg] });",
+        "}"
+      ]
+    }
+  ],
+  "expected": [{ "file": "src/auth/jwt.ts", "line": 4, "category": "security" }]
+}

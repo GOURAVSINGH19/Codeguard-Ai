@@ -46,6 +46,8 @@ export const reviews = pgTable(
     score: integer("score"),
     summary: text("summary"),
     error: text("error"),
+    // How many times the stuck-review sweeper has restarted this review (Day 3.4).
+    attempts: integer("attempts").notNull().default(0),
     model: text("model"),
     tokens: integer("tokens"),
     durationMs: integer("duration_ms"),

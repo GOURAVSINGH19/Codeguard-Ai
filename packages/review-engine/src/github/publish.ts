@@ -38,7 +38,8 @@ export function summaryMarkdown(input: {
         .join("\n")}\n</details>`
     : "";
   const link = input.detailsUrl ? `\n\n[Open the full review](${input.detailsUrl})` : "";
-  return `### 🛡️ CodeGuard AI review: ${input.score}/100\n\n${input.summary}\n\n${counts}${offDiff}${link}`;
+  // Stored 0–100; shown 0–10 like the dashboard.
+  return `### 🛡️ CodeGuard AI review: ${(input.score / 10).toFixed(1)}/10\n\n${input.summary}\n\n${counts}${offDiff}${link}`;
 }
 
 /**

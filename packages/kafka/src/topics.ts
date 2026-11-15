@@ -2,7 +2,11 @@
 export const TOPICS = {
   webhookReceived: "codeguard.webhook.received",
   reviewRequested: "codeguard.review.requested",
+  repoIndexRequested: "codeguard.repo.index.requested",
 } as const;
+
+/** Partition key for repo-level work: one repo's index jobs run in order, never two at once. */
+export const repoKey = (repositoryId: string) => `repo:${repositoryId}`;
 
 export type Topic = (typeof TOPICS)[keyof typeof TOPICS];
 

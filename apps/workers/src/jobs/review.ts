@@ -7,29 +7,22 @@ import {
   isReviewable,
   lintFiles,
   LINTABLE,
-  runReview,
+  runStagedReview,
   type DiffFile,
+  type Embedder,
   type LLMProvider,
 } from "@codeguard/review-engine";
-import {
-  completeCheckRun,
-  fetchDiffFiles,
-  fetchFileAtRef,
-  isNotFound,
-  publishReview,
-  startCheckRun,
-} from "@codeguard/review-engine/github";
+import { completeCheckRun, fetchDiffFiles, isNotFound, publishReview, startCheckRun } from "@codeguard/review-engine/github";
+import { buildReviewContext } from "../context";
 import { installationOctokit } from "../github";
 import { setProgress } from "../progress";
-
-const MAX_LINT_FILES = 20;
 
 /**
  * Step 1 of every review: the CLAIM.
  *
  * INSERT … ON CONFLICT (repo, pr, sha) DO UPDATE … WHERE status IN ('pending','failed')
  *   - no row yet               → we insert it and own it
- *   - 'pending' (manual click) → we take it over
+ *   - 'pending' (manual click, or reset by the stuck-review sweeper) → we take it over
  *   - 'failed' (a retry)       → we take it over again
  *   - 'in_progress'/'completed'→ nothing returned: another worker has it, or it's done → skip
  * One atomic statement, so two workers can never both win.
@@ -57,7 +50,7 @@ export async function claimReview(e: ReviewRequested): Promise<string | null> {
   return claimed?.id ?? null;
 }
 
-export function createReviewJob(provider: LLMProvider) {
+export function createReviewJob(deps: { provider: LLMProvider; verifierProvider?: LLMProvider; embedder: Embedder }) {
   return async function onReviewRequested(e: ReviewRequested): Promise<void> {
     const reviewId = await claimReview(e);
     if (!reviewId) {
@@ -67,7 +60,7 @@ export function createReviewJob(provider: LLMProvider) {
     console.info(`[review] start ${reviewId} ${e.repoFullName}#${e.prNumber} @ ${e.headSha.slice(0, 7)}`);
 
     try {
-      await runPipeline(reviewId, e, provider);
+      await runPipeline(reviewId, e, deps);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await db
@@ -79,7 +72,11 @@ export function createReviewJob(provider: LLMProvider) {
   };
 }
 
-async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMProvider): Promise<void> {
+async function runPipeline(
+  reviewId: string,
+  e: ReviewRequested,
+  deps: { provider: LLMProvider; verifierProvider?: LLMProvider; embedder: Embedder },
+): Promise<void> {
   const env = getEnv();
   const started = Date.now();
   const [owner, repo] = e.repoFullName.split("/");
@@ -94,87 +91,72 @@ async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMPr
   const [prev] = await db
     .select({ sha: reviews.headSha })
     .from(reviews)
-    .where(
-      and(
-        eq(reviews.repoFullName, e.repoFullName),
-        eq(reviews.prNumber, e.prNumber),
-        eq(reviews.status, "completed"),
-        ne(reviews.headSha, e.headSha),
-      ),
-    )
+    .where(and(eq(reviews.repoFullName, e.repoFullName), eq(reviews.prNumber, e.prNumber), eq(reviews.status, "completed"), ne(reviews.headSha, e.headSha)))
     .orderBy(desc(reviews.completedAt))
     .limit(1);
 
-  let files: DiffFile[];
+  let allFiles: DiffFile[];
   let reviewedFromSha: string | null = null;
   try {
-    files = await fetchDiffFiles(octokit, owner, repo, prev?.sha ?? pr.base.sha, e.headSha);
+    allFiles = await fetchDiffFiles(octokit, owner, repo, prev?.sha ?? pr.base.sha, e.headSha);
     reviewedFromSha = prev?.sha ?? null;
   } catch (err) {
     // A force-push can delete the old commit: fall back to the full PR diff.
     if (!prev || !isNotFound(err)) throw err;
-    files = await fetchDiffFiles(octokit, owner, repo, pr.base.sha, e.headSha);
+    allFiles = await fetchDiffFiles(octokit, owner, repo, pr.base.sha, e.headSha);
   }
 
   const checkRunId = await startCheckRun(octokit, { owner, repo, headSha: e.headSha, detailsUrl });
-  await setProgress(reviewId, "build_context_packs", {
+  await setProgress(reviewId, "snapshot_repository", {
     prTitle: pr.title,
     baseSha: pr.base.sha,
     reviewedFromSha,
     checkRunId,
     pullRequest: {
-      owner,
-      repo,
-      number: pr.number,
-      title: pr.title,
-      htmlUrl: pr.html_url,
-      headBranch: pr.head.ref,
-      baseBranch: pr.base.ref,
-      authorLogin: pr.user?.login ?? null,
-      additions: pr.additions,
-      deletions: pr.deletions,
-      changedFiles: pr.changed_files,
+      owner, repo, number: pr.number, title: pr.title, htmlUrl: pr.html_url,
+      headBranch: pr.head.ref, baseBranch: pr.base.ref, authorLogin: pr.user?.login ?? null,
+      additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files,
     },
   });
 
-  // ── Deterministic tools first: ESLint on the HEAD version of changed JS/TS ─
-  const lintable = files.filter((f) => isReviewable(f) && LINTABLE.test(f.filename)).slice(0, MAX_LINT_FILES);
-  const lintInputs = (
-    await Promise.all(
-      lintable.map(async (f) => {
-        const content = await fetchFileAtRef(octokit, owner, repo, f.filename, e.headSha);
-        return content === null ? null : { path: f.filename, content, addedLines: addedLines(f.patch) };
-      }),
-    )
-  ).filter((x): x is NonNullable<typeof x> => x !== null);
-  const lint = await lintFiles(lintInputs);
+  // ── Context beyond the diff: policy, graph, callers, RAG, risk ─────────────
+  await setProgress(reviewId, "build_context_packs");
+  const { context, files } = await buildReviewContext({
+    octokit, embedder: deps.embedder, owner, repo,
+    repoFullName: e.repoFullName, installationId: e.installationId,
+    baseSha: pr.base.sha, headSha: e.headSha, files: allFiles,
+  });
+  await setProgress(reviewId, "build_software_graph");
 
-  // ── The model ─────────────────────────────────────────────────────────────
-  await setProgress(reviewId, "quality");
-  const result = await runReview({
-    provider,
+  // ── Deterministic tools first: ESLint on changed JS/TS (contents already fetched) ─
+  const lint = await lintFiles(
+    files
+      .filter((f) => isReviewable(f) && LINTABLE.test(f.filename) && context.headContents.has(f.filename))
+      .slice(0, 20)
+      .map((f) => ({ path: f.filename, content: context.headContents.get(f.filename)!, addedLines: addedLines(f.patch) })),
+  );
+
+  // ── The staged review (stages report their own progress) ───────────────────
+  const result = await runStagedReview({
+    provider: deps.provider,
+    verifierProvider: deps.verifierProvider,
     title: pr.title,
     body: pr.body,
     files,
     lint,
+    context,
     maxDiffTokens: env.REVIEW_MAX_DIFF_TOKENS,
+    onProgress: (node) => setProgress(reviewId, node),
   });
 
-  // ── Save (one transaction: findings + scores together, or neither) ─────────
-  await setProgress(reviewId, "aggregate_findings");
+  // ── Save (one transaction: findings + results together, or neither) ────────
   await db.transaction(async (tx) => {
     await tx.delete(reviewFindings).where(eq(reviewFindings.reviewId, reviewId)); // a retry replaces, never duplicates
     if (result.findings.length) {
       await tx.insert(reviewFindings).values(
         result.findings.map((f) => ({
-          reviewId,
-          file: f.file,
-          line: f.line,
-          severity: f.severity,
-          category: f.category,
-          message: f.message,
-          suggestion: f.suggestion,
-          source: f.source,
+          reviewId, file: f.file, line: f.line, severity: f.severity, category: f.category,
+          message: f.message, suggestion: f.suggestion, source: f.source, confidence: f.confidence,
         })),
       );
     }
@@ -183,7 +165,8 @@ async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMPr
       .set({
         score: result.score,
         summary: result.summary,
-        model: `${provider.name}/${result.model}`,
+        assurance: result.assurance as unknown as Record<string, unknown>,
+        model: `${deps.provider.name}/${result.model}`,
         tokens: result.tokens,
         updatedAt: new Date(),
       })
@@ -195,16 +178,12 @@ async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMPr
   let githubReviewUrl: string | null = null;
   let publishError: string | null = null;
   try {
-    const commentable = new Map(files.map((f) => [f.filename, commentableLines(f.patch)]));
     ({ htmlUrl: githubReviewUrl } = await publishReview(octokit, {
-      owner,
-      repo,
-      prNumber: e.prNumber,
-      headSha: e.headSha,
+      owner, repo, prNumber: e.prNumber, headSha: e.headSha,
       score: result.score,
-      summary: result.summary,
+      summary: `${result.summary}\n\n**Decision:** ${result.decision.headline}`,
       findings: result.findings,
-      commentable,
+      commentable: new Map(files.map((f) => [f.filename, commentableLines(f.patch)])),
       detailsUrl,
     }));
   } catch (err) {
@@ -213,15 +192,19 @@ async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMPr
   }
 
   if (checkRunId) {
-    // Day 2 rule: any critical finding fails the check. Day 3 replaces this with the team's .codeguard.yml policy.
-    const critical = result.findings.filter((f) => f.severity === "critical").length;
+    // The TEAM'S POLICY decides the check, not the model.
+    // Mark "CodeGuard AI" as a required check in branch protection to block merges on failure.
     await completeCheckRun(octokit, {
-      owner,
-      repo,
-      checkRunId,
-      conclusion: critical > 0 ? "failure" : "success",
-      title: critical > 0 ? `${critical} critical issue(s) · score ${result.score}/100` : `Score ${result.score}/100`,
-      summary: result.summary,
+      owner, repo, checkRunId,
+      conclusion: result.decision.conclusion,
+      title: result.decision.headline,
+      summary: [
+        result.summary,
+        "",
+        ...result.decision.policies.map((p) => `- **${p.status.toUpperCase()}** ${p.id}: ${p.message}`),
+        "",
+        `Risk: **${context.risk.level}** (${context.risk.score}/100): ${context.risk.factors.join("; ")}`,
+      ].join("\n"),
     }).catch((err) => console.warn(`[review] ${reviewId} check run not completed:`, (err as Error).message));
   }
 
@@ -232,5 +215,5 @@ async function runPipeline(reviewId: string, e: ReviewRequested, provider: LLMPr
     durationMs: Date.now() - started,
     completedAt: new Date(),
   });
-  console.info(`[review] done ${reviewId}: score ${result.score}, ${result.findings.length} finding(s), ${result.tokens} tokens`);
+  console.info(`[review] done ${reviewId}: score ${result.score}, ${result.findings.length} finding(s), ${result.decision.verdict}, ${result.tokens} tokens`);
 }

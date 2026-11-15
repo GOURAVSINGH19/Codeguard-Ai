@@ -1,0 +1,28 @@
+{
+  "name": "sql-injection",
+  "description": "A parameterised query is replaced with string interpolation.",
+  "title": "Simplify user lookup query",
+  "body": "Inline the query, the parameter array was confusing.",
+  "files": [
+    {
+      "path": "src/db/users.ts",
+      "before": [
+        "import { pool } from \"./pool\";",
+        "",
+        "export async function findUserByEmail(email: string) {",
+        "  const result = await pool.query(\"SELECT id, email, role FROM users WHERE email = $1\", [email]);",
+        "  return result.rows[0] ?? null;",
+        "}"
+      ],
+      "after": [
+        "import { pool } from \"./pool\";",
+        "",
+        "export async function findUserByEmail(email: string) {",
+        "  const result = await pool.query(`SELECT id, email, role FROM users WHERE email = '${email}'`);",
+        "  return result.rows[0] ?? null;",
+        "}"
+      ]
+    }
+  ],
+  "expected": [{ "file": "src/db/users.ts", "line": 4, "category": "security" }]
+}

@@ -70,3 +70,21 @@ describe("prKey", () => {
     expect(prKey("OctoCat/Hello", 7)).toBe(prKey("octocat/hello", 7));
   });
 });
+
+import { securityFromEnv } from "../client";
+
+describe("securityFromEnv", () => {
+  it("uses no TLS/SASL for local Docker", () => {
+    expect(securityFromEnv({})).toEqual({});
+  });
+  it("turns on SASL over TLS for hosted Kafka (e.g. Aiven)", () => {
+    expect(securityFromEnv({ KAFKA_SASL_USERNAME: "avnadmin", KAFKA_SASL_PASSWORD: "pw", KAFKA_CA_CERT: "-----BEGIN-----\nabc" })).toEqual({
+      ssl: { rejectUnauthorized: true, ca: ["-----BEGIN-----\nabc"] },
+      sasl: { mechanism: "scram-sha-256", username: "avnadmin", password: "pw" },
+    });
+  });
+  it("supports TLS client certificates", () => {
+    const out = securityFromEnv({ KAFKA_CLIENT_CERT: "C", KAFKA_CLIENT_KEY: "K" });
+    expect(out).toEqual({ ssl: { rejectUnauthorized: true, cert: "C", key: "K" } });
+  });
+});

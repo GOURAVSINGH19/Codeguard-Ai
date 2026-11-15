@@ -27,5 +27,19 @@ export const ReviewRequested = z.object({
   requestedBy: z.string().nullable(), // Clerk user id for manual reviews
 });
 
+/**
+ * Bring a repo's code index (code_chunks + code_files) up to date with a commit
+ * of its default branch. Idempotent: unchanged files (same git blob sha) are skipped,
+ * so a full index and an incremental one are the same job.
+ */
+export const RepoIndexRequested = z.object({
+  type: z.literal("repo.index.requested"),
+  repositoryId: z.uuid(),
+  installationId: z.number().int().positive(),
+  ref: z.string().nullable(), // commit sha; null = current tip of the default branch
+  reason: z.enum(["installed", "push", "review", "manual"]),
+});
+
 export type WebhookReceived = z.infer<typeof WebhookReceived>;
+export type RepoIndexRequested = z.infer<typeof RepoIndexRequested>;
 export type ReviewRequested = z.infer<typeof ReviewRequested>;
