@@ -61,7 +61,7 @@ export function getEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const env: Env = {
     ...parsed.data,
     // .env files can't hold real newlines, so the PEM key is stored with "\n".
-    GITHUB_PRIVATE_KEY: parsed.data.GITHUB_PRIVATE_KEY.replace(/\n/g, "\n"),
+    GITHUB_PRIVATE_KEY: parsed.data.GITHUB_PRIVATE_KEY.replace(/\\n/g, "\n"),
   };
   if (source === process.env) cached = env;
   return env;

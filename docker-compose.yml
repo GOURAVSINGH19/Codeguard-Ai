@@ -1,7 +1,0 @@
-# Local infrastructure. Postgres runs on Neon (hosted), so only Kafka is here.
-# Start:  docker compose up -d      Check:  docker compose ps
-services:
-  kafka:
-    image: apache/kafka:3.8.0 # default config = single-node KRaft (no Zookeeper)
-    ports:
-      - "9092:9092"
