@@ -1,42 +1,29 @@
 {
   "name": "@codeguard/db",
-  "version": "0.0.0",
-  "description": "Database package with Drizzle ORM + Neon Postgres + pgvector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
   "main": "./index.ts",
   "types": "./index.ts",
-  "type": "module",
   "exports": {
-    ".": {
-      "types": "./index.ts",
-      "default": "./index.ts"
-    },
-    "./schema": {
-      "types": "./schema/index.ts",
-      "default": "./schema/index.ts"
-    },
-    "./client": {
-      "types": "./client.ts",
-      "default": "./client.ts"
-    }
+    ".": "./index.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.12.4",
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.4",
-    "drizzle-orm": "^0.45.2",
-    "postgres": "^3.4.9"
+    "@neondatabase/serverless": "^1.2.0",
+    "drizzle-orm": "^0.45.4",
+    "ws": "^8.22.2"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.10",
+    "@types/node": "^20.19.43",
+    "@types/ws": "^8.18.2",
+    "dotenv": "^18.0.10",
+    "drizzle-kit": "^0.31.11",
     "typescript": "^5.9.3"
   }
 }

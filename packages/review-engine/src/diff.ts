@@ -1,158 +1,121 @@
+/**
+ * Turning GitHub's per-file patches into something a model can review and
+ * something GitHub will accept comments on.
+ */
 
-
-export interface PRFileInput {
+/** The subset of a GitHub "file in a diff" we use (pulls.listFiles / repos.compareCommits). */
+export interface DiffFile {
   filename: string;
-  status: string;
+  status: string; // added | modified | removed | renamed | …
   additions: number;
   deletions: number;
-  patch?: string | null;
+  patch?: string; // missing for binary or very large files
 }
 
-export interface AnnotatedPatch {
+export interface PatchLine {
+  kind: "+" | "-" | " ";
+  /** Line number in the NEW file (right side). Undefined for removed lines. */
+  newLine?: number;
   text: string;
-  commentableLines: Set<number>;
 }
 
-const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-export function annotatePatch(patch: string): AnnotatedPatch {
-  const out: string[] = [];
-  const commentableLines = new Set<number>();
-  let newLine = 0;
-  let inHunk = false;
-
+export function parsePatch(patch: string): PatchLine[] {
+  const out: PatchLine[] = [];
+  let next = 0;
   for (const raw of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(raw);
-    if (header) {
-      newLine = Number(header[1]);
-      inHunk = true;
-      out.push(raw);
+    const hunk = HUNK.exec(raw);
+    if (hunk) {
+      next = Number(hunk[1]);
       continue;
     }
-    if (!inHunk) continue;
-
     if (raw.startsWith("\\")) continue; // "\ No newline at end of file"
-
-    const marker = raw[0];
-    const code = raw.slice(1);
-    if (marker === "+") {
-      out.push(`${String(newLine).padStart(5)} + ${code}`);
-      commentableLines.add(newLine);
-      newLine++;
-    } else if (marker === "-") {
-      out.push(`${"".padStart(5)} - ${code}`);
-    } else {
-      // context line (leading space) or an empty line inside the hunk
-      out.push(`${String(newLine).padStart(5)}   ${code}`);
-      commentableLines.add(newLine);
-      newLine++;
-    }
-  }
-
-  return { text: out.join("\n"), commentableLines };
-}
-
-/** Lines added by a patch, with their NEW-file line numbers. */
-export function addedLines(patch: string | null | undefined): Array<{ line: number; text: string }> {
-  if (!patch) return [];
-  const out: Array<{ line: number; text: string }> = [];
-  let newLine = 0;
-  let inHunk = false;
-  for (const raw of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(raw);
-    if (header) {
-      newLine = Number(header[1]);
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk || raw.startsWith("\\")) continue;
-    if (raw[0] === "+") {
-      out.push({ line: newLine, text: raw.slice(1) });
-      newLine++;
-    } else if (raw[0] !== "-") {
-      newLine++;
-    }
+    const kind = raw[0] as PatchLine["kind"];
+    if (kind === "+") out.push({ kind, newLine: next++, text: raw.slice(1) });
+    else if (kind === "-") out.push({ kind, text: raw.slice(1) });
+    else out.push({ kind: " ", newLine: next++, text: raw.slice(1) });
   }
   return out;
 }
 
-/** Changed line ranges (NEW-file numbering) per hunk, for symbol overlap checks. */
-export function changedLineSet(patch: string | null | undefined): Set<number> {
-  return new Set(addedLines(patch).map((l) => l.line));
+/** Right-side lines GitHub accepts review comments on (added + context lines). */
+export function commentableLines(patch: string | undefined): Set<number> {
+  const s = new Set<number>();
+  if (!patch) return s;
+  for (const l of parsePatch(patch)) if (l.newLine !== undefined) s.add(l.newLine);
+  return s;
 }
 
-export interface DiffContextOptions {
-  /** Max characters of annotated diff to send (default 24,000). */
-  budgetChars?: number;
-  /** Filenames in priority order (e.g. from the dependency-graph selector). */
-  priorityOrder?: string[];
+/** Only the ADDED lines: what this change actually introduced. */
+export function addedLines(patch: string | undefined): Set<number> {
+  const s = new Set<number>();
+  if (!patch) return s;
+  for (const l of parsePatch(patch)) if (l.kind === "+" && l.newLine !== undefined) s.add(l.newLine);
+  return s;
 }
+
+/**
+ * Number every line so the model can CITE real line numbers instead of counting
+ * (models are bad at counting, good at copying a number they can see):
+ *   "+  42 | const ALG = …"   added
+ *   "   43 | return x"        context
+ *   "-     | old line"        removed (no new-file number)
+ */
+export function numberPatch(patch: string): string {
+  return parsePatch(patch)
+    .map((l) => `${l.kind}${l.newLine !== undefined ? String(l.newLine).padStart(5) : "     "} | ${l.text}`)
+    .join("\n");
+}
+
+const SKIP = [
+  /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|Cargo\.lock|poetry\.lock|go\.sum)$/,
+  /\.min\.(js|css)$/,
+  /\.(map|snap|svg|png|jpe?g|gif|webp|ico|pdf|zip|woff2?|ttf|eot|mp4|mp3)$/i,
+  /(^|\/)(dist|build|out|coverage|node_modules|vendor|\.next)\//,
+  /\.generated\.\w+$/,
+];
+
+export function isReviewable(f: DiffFile): boolean {
+  return f.status !== "removed" && !!f.patch && !SKIP.some((re) => re.test(f.filename));
+}
+
+/** Rough token estimate (≈ 4 characters per token for code). Good enough for budgeting. */
+export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
 
 export interface DiffContext {
   text: string;
-  includedFiles: string[];
-  /** Changed files left out because of the budget. */
-  excludedFiles: string[];
-  /** Changed files GitHub gave no patch for (binary or too large). */
-  noPatchFiles: string[];
-  commentable: Map<string, Set<number>>;
+  included: DiffFile[];
+  skipped: Array<{ filename: string; reason: string }>;
 }
-
-export const DEFAULT_DIFF_BUDGET_CHARS = 24_000;
 
 /**
- * Build the diff section of the prompt within a character budget. Whole files
- * are included or excluded (never cut mid-hunk) and exclusions are reported so
- * they can be logged and mentioned to the model.
+ * Build the numbered diff for the prompt, within a token budget.
+ * Smaller files first: more files fit, and big rewrites are usually less dense in bugs per line.
  */
-export function buildDiffContext(files: PRFileInput[], opts: DiffContextOptions = {}): DiffContext {
-  const budget = opts.budgetChars ?? DEFAULT_DIFF_BUDGET_CHARS;
-  const byName = new Map(files.map((f) => [f.filename, f]));
-
-  const ordered: PRFileInput[] = [];
-  const seen = new Set<string>();
-  for (const name of opts.priorityOrder ?? []) {
-    const f = byName.get(name);
-    if (f && !seen.has(name)) {
-      ordered.push(f);
-      seen.add(name);
-    }
-  }
-  const rest = files
-    .filter((f) => !seen.has(f.filename))
-    .sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions));
-  ordered.push(...rest);
-
-  const sections: string[] = [];
-  const includedFiles: string[] = [];
-  const excludedFiles: string[] = [];
-  const noPatchFiles: string[] = [];
-  const commentable = new Map<string, Set<number>>();
+export function buildDiffContext(files: DiffFile[], budgetTokens: number): DiffContext {
+  const included: DiffFile[] = [];
+  const skipped: DiffContext["skipped"] = [];
+  const parts: string[] = [];
   let used = 0;
 
-  for (const file of ordered) {
-    if (!file.patch) {
-      noPatchFiles.push(file.filename);
-      continue;
-    }
-    const annotated = annotatePatch(file.patch);
-    const section =
-      `<file path="${escapeAttr(file.filename)}" status="${escapeAttr(file.status)}" additions="${file.additions}" deletions="${file.deletions}">\n` +
-      `${annotated.text}\n</file>`;
+  const candidates = files.filter((f) => {
+    if (isReviewable(f)) return true;
+    skipped.push({ filename: f.filename, reason: f.status === "removed" ? "deleted" : !f.patch ? "binary or too large" : "generated/vendored" });
+    return false;
+  });
+  candidates.sort((a, b) => (a.patch?.length ?? 0) - (b.patch?.length ?? 0));
 
-    if (used + section.length > budget) {
-      excludedFiles.push(file.filename);
+  for (const f of candidates) {
+    const block = `<file path="${f.filename}" status="${f.status}">\n${numberPatch(f.patch!)}\n</file>`;
+    const cost = estimateTokens(block);
+    if (used + cost > budgetTokens) {
+      skipped.push({ filename: f.filename, reason: "over the token budget" });
       continue;
     }
-    sections.push(section);
-    includedFiles.push(file.filename);
-    commentable.set(file.filename, annotated.commentableLines);
-    used += section.length;
+    used += cost;
+    included.push(f);
+    parts.push(block);
   }
-
-  return { text: sections.join("\n\n"), includedFiles, excludedFiles, noPatchFiles, commentable };
-}
-
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return { text: parts.join("\n\n"), included, skipped };
 }

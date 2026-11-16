@@ -41,3 +41,6 @@ yarn-debug.log*
 pnpm-debug.log*
 .kiro
 .vercel
+
+# Eval run outputs (the committed baseline is evals/baseline.json)
+apps/workers/evals/results/

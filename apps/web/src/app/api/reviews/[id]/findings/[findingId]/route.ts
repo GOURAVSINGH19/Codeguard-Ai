@@ -1,35 +1,32 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
-import { z } from "zod";
-import { UuidSchema } from "@codeguard/types";
-import { ReviewPersistenceService } from "@/services";
-import { FINDING_STATUSES } from "@/services/ReviewPersistenceService";
-import { handleApiError, jsonError } from "@/lib/api";
+import { db, reviewFindings, and, eq } from "@codeguard/db";
+import { HttpError, requireUserId, withErrors } from "@/server/http";
+import { requireUserReview } from "@/server/review-access";
 
-const BodySchema = z.object({
-  status: z.enum(FINDING_STATUSES),
-  note: z.string().max(500).optional(),
-});
+type Ctx = { params: Promise<{ id: string; findingId: string }> };
+
+const STATUSES = ["open", "resolved", "dismissed"] as const;
 
 /**
- * PATCH /api/reviews/:id/findings/:findingId — resolve, dismiss or reopen a finding.
- *   { "status": "resolved" | "dismissed" | "open", "note"?: string }
+ * PATCH /api/reviews/:id/findings/:findingId   body: { "status": "open" | "resolved" | "dismissed" }
+ * Dismissed findings stop counting toward "needs attention".
+ * (After Day 3, a dismissal is also a signal for "learnings".)
  */
-export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; findingId: string }> }) {
-  try {
-    const { userId } = await auth();
-    if (!userId) return jsonError(401, "Unauthorized");
+export const PATCH = withErrors(async (req: Request, { params }: Ctx) => {
+  const userId = await requireUserId();
+  const { id, findingId } = await params;
+  const review = await requireUserReview(userId, id);
 
-    const { id, findingId } = await params;
-    if (!UuidSchema.safeParse(id).success || !UuidSchema.safeParse(findingId).success) return jsonError(400, "Invalid ID format (must be a valid UUID)");
+  const body = (await req.json().catch(() => null)) as { status?: unknown } | null;
+  const status = STATUSES.find((s) => s === body?.status);
+  if (!status) throw new HttpError(400, "Body must be { status: 'open' | 'resolved' | 'dismissed' }");
 
-    const parsed = BodySchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) return jsonError(400, `status must be one of: ${FINDING_STATUSES.join(", ")}`);
+  const [finding] = await db
+    .update(reviewFindings)
+    .set({ status, updatedAt: new Date() })
+    // Scoped to this review, so a finding id from someone else's review can't be changed.
+    .where(and(eq(reviewFindings.id, findingId), eq(reviewFindings.reviewId, review.id)))
+    .returning({ id: reviewFindings.id, status: reviewFindings.status });
+  if (!finding) throw new HttpError(404, "Finding not found");
 
-    const finding = await new ReviewPersistenceService().updateFindingStatus({ reviewId: id, findingId, userId, ...parsed.data });
-    if (!finding) return jsonError(404, "Finding not found");
-    return NextResponse.json({ finding });
-  } catch (err) {
-    return handleApiError(err, "PATCH /api/reviews/[id]/findings/[findingId]");
-  }
-}
+  return Response.json({ finding });
+});

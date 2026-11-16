@@ -1,44 +1,52 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
-import { db, githubInstallations, repositories, eq } from "@codeguard/db";
-import { GitHubAppService } from "@/services/GitHubAppService";
-import { handleApiError, jsonError } from "@/lib/api";
+import { RequestError } from "octokit";
+import { db, githubInstallations, and, eq } from "@codeguard/db";
+import { githubApp } from "@/server/github-app";
+import { HttpError, requireUserId, withErrors } from "@/server/http";
+import { setInstallationStatus } from "@/server/installation-sync";
+import { toInstallationRow } from "@/server/serializers";
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { userId } = await auth();
-    if (!userId) return jsonError(401, "Unauthorized");
+type Ctx = { params: Promise<{ id: string }> };
 
-    const installationId = Number((await params).id);
-    if (!Number.isInteger(installationId) || installationId <= 0) return jsonError(400, "Invalid installation id");
+/** Load an installation by GitHub installation id, only if the signed-in user owns it. */
+async function ownedInstallation(userId: string, idParam: string) {
+  const installationId = Number(idParam);
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new HttpError(400, "Invalid installation id");
 
-    const [installation] = await db
-      .select()
-      .from(githubInstallations)
-      .where(eq(githubInstallations.installationId, installationId))
-      .limit(1);
-
-    if (!installation || installation.userId !== userId) return jsonError(404, "Not found");
-
-    // /app/installations/:id requires the App JWT, not an installation token.
-    try {
-      await GitHubAppService.fromEnv().deleteInstallation(installationId);
-    } catch (err) {
-      console.warn("[DELETE installation] GitHub uninstall failed, cleaning up locally:", (err as Error).message);
-    }
-
-    await db
-      .update(repositories)
-      .set({ status: "inactive", autoReviewEnabled: false, updatedAt: new Date() })
-      .where(eq(repositories.installationId, installation.id));
-
-    await db
-      .update(githubInstallations)
-      .set({ status: "deleted", updatedAt: new Date() })
-      .where(eq(githubInstallations.id, installation.id));
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    return handleApiError(err, "DELETE /api/github/app/installations/[id]");
-  }
+  const [row] = await db
+    .select()
+    .from(githubInstallations)
+    .where(and(eq(githubInstallations.installationId, installationId), eq(githubInstallations.ownerUserId, userId)))
+    .limit(1);
+  // 404 (not 403) so we don't reveal which installation ids exist.
+  if (!row) throw new HttpError(404, "Installation not found");
+  return row;
 }
+
+/** GET /api/github/app/installations/:installationId */
+export const GET = withErrors(async (_req: Request, { params }: Ctx) => {
+  const userId = await requireUserId();
+  const row = await ownedInstallation(userId, (await params).id);
+  return Response.json({ installation: toInstallationRow(row) });
+});
+
+/**
+ * DELETE /api/github/app/installations/:installationId
+ * Uninstall the App from that account on GitHub, then mark it deleted here.
+ * (GitHub also sends an `installation.deleted` webhook; both paths are idempotent.)
+ */
+export const DELETE = withErrors(async (_req: Request, { params }: Ctx) => {
+  const userId = await requireUserId();
+  const row = await ownedInstallation(userId, (await params).id);
+
+  try {
+    await githubApp().octokit.request("DELETE /app/installations/{installation_id}", {
+      installation_id: row.installationId,
+    });
+  } catch (err) {
+    // Already gone on GitHub → still clean up our side.
+    if (!(err instanceof RequestError && err.status === 404)) throw err;
+  }
+
+  await setInstallationStatus(row.installationId, "deleted");
+  return Response.json({ ok: true });
+});

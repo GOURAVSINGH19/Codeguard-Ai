@@ -1,38 +1,23 @@
-import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { randomBytes } from "crypto";
-import { GitHubAppService } from "@/services/GitHubAppService";
-import { handleApiError, jsonError } from "@/lib/api";
-
-export const INSTALL_STATE_COOKIE = "cg_install_state";
+import { auth } from "@clerk/nextjs/server";
+import { installUrl } from "@/server/github-app";
+import { STATE_COOKIE, newState, stateCookieOptions } from "@/server/install-state";
+import { errorResponse } from "@/server/http";
 
 /**
  * GET /api/github/app/install
- *
- * Starts the GitHub App installation. A random `state` is stored in an
- * httpOnly cookie and passed to GitHub; the callback only accepts a request
- * that returns the same value (CSRF protection).
+ * Start the install flow: remember a random state in a cookie, send the user to GitHub.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.redirect(new URL("/install?error=not_authenticated", req.url));
+
   try {
-    const { userId } = await auth();
-    if (!userId) return jsonError(401, "Unauthorized");
-
-    const app = GitHubAppService.fromEnv();
-    const state = randomBytes(24).toString("hex");
-    const url = new URL(app.installUrl);
-    url.searchParams.set("state", state);
-
-    const res = NextResponse.redirect(url);
-    res.cookies.set(INSTALL_STATE_COOKIE, state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/api/github/app/callback",
-      maxAge: 15 * 60,
-    });
+    const state = newState();
+    const res = NextResponse.redirect(installUrl(state));
+    res.cookies.set(STATE_COOKIE, state, stateCookieOptions);
     return res;
   } catch (err) {
-    return handleApiError(err, "GET /api/github/app/install");
+    return errorResponse(err);
   }
 }

@@ -1,45 +1,28 @@
 {
   "name": "workers",
-  "version": "1.0.0",
-  "description": "CodeGuard AI Kafka workers: webhook routing, PR reviews and incremental code indexing",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "dev:local": "tsx watch src/local.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "test": "vitest run",
+    "eval": "tsx evals/harness.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.12.4",
   "dependencies": {
     "@codeguard/config": "workspace:*",
     "@codeguard/db": "workspace:*",
     "@codeguard/kafka": "workspace:*",
     "@codeguard/review-engine": "workspace:*",
-    "@codeguard/types": "workspace:*",
-    "@octokit/auth-app": "^7.0.0",
-    "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
-    "kafkajs": "^2.2.4",
+    "dotenv": "^18.0.10",
     "octokit": "^5.0.5",
-    "openai": "^7.15.0",
-    "tree-sitter-cpp": "~0.23.4",
-    "tree-sitter-go": "~0.23.4",
-    "tree-sitter-java": "~0.23.5",
-    "tree-sitter-javascript": "^0.23.1",
-    "tree-sitter-python": "~0.23.6",
-    "tree-sitter-rust": "~0.23.2",
-    "tree-sitter-typescript": "~0.23.2",
-    "web-tree-sitter": "^0.24.0",
-    "zod": "^4.6.2"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "tsx": "^4.23.13",
-    "typescript": "^7.0.2"
+    "diff": "^8.0.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   }
 }

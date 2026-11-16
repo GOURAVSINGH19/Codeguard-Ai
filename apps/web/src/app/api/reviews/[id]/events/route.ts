@@ -1,64 +1,64 @@
-import { auth } from "@clerk/nextjs/server";
-import { UuidSchema } from "@codeguard/types";
-import { ReviewPersistenceService } from "@/services";
-import { jsonError } from "@/lib/api";
+import { db, reviews, eq } from "@codeguard/db";
+import { errorResponse, requireUserId } from "@/server/http";
+import { requireUserReview } from "@/server/review-access";
 
-/** How long one stream stays open; the browser reconnects (EventSource does it itself). */
-const STREAM_MS = 4 * 60_000;
-const POLL_MS = 1_500;
+type Ctx = { params: Promise<{ id: string }> };
+
+const POLL_MS = 1_000;
+const MAX_STREAM_MS = 5 * 60_000; // hosts cap open responses; the browser reconnects or falls back to polling
 
 /**
- * GET /api/reviews/:id/events — Server-Sent Events with the review's status
- * and the pipeline node currently running.
+ * GET /api/reviews/:id/events: Server-Sent Events with live pipeline progress.
  *
- *   event: progress  data: {"status":"in_progress","progress":"security"}
- *   event: done      data: {"status":"completed","score":7.4}
+ *   event: progress   data: {"status":"in_progress","progress":"quality"}
+ *   event: done       data: {}
  *
- * The worker records progress on the review row; this route watches the row,
- * so it works no matter which worker instance runs the review.
+ * The workers write `reviews.progress`; this route watches it (1 query/s) and
+ * forwards each change. src/lib/poll-review.ts consumes it.
  */
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) return jsonError(401, "Unauthorized");
-
-  const { id } = await params;
-  if (!UuidSchema.safeParse(id).success) return jsonError(400, "Invalid review ID format (must be a valid UUID)");
-
-  const persistence = new ReviewPersistenceService();
-  const first = await persistence.getReviewStatus(id, userId);
-  if (!first) return jsonError(404, "Review not found");
+export async function GET(req: Request, { params }: Ctx) {
+  let reviewId: string;
+  try {
+    const userId = await requireUserId();
+    reviewId = (await requireUserReview(userId, (await params).id)).id;
+  } catch (err) {
+    return errorResponse(err);
+  }
 
   const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
+  const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-      const deadline = Date.now() + STREAM_MS;
+      const send = (event: string, data: unknown) =>
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      const startedAt = Date.now();
       let last = "";
-      let current = first;
       try {
-        controller.enqueue(encoder.encode(`retry: 3000\n\n`));
-        while (!req.signal.aborted) {
-          const key = `${current.status}|${current.progress}`;
-          if (current.status === "completed" || current.status === "failed") {
-            send("done", { status: current.status, score: current.score });
+        while (!req.signal.aborted && Date.now() - startedAt < MAX_STREAM_MS) {
+          const [r] = await db
+            .select({ status: reviews.status, progress: reviews.progress })
+            .from(reviews)
+            .where(eq(reviews.id, reviewId))
+            .limit(1);
+          if (!r) break;
+          const now = `${r.status}:${r.progress}`;
+          if (now !== last) {
+            send("progress", { status: r.status, progress: r.progress });
+            last = now;
+          }
+          if (r.status === "completed" || r.status === "failed") {
+            send("done", {});
             break;
           }
-          if (key !== last) {
-            send("progress", { status: current.status, progress: current.progress });
-            last = key;
-          } else {
-            controller.enqueue(encoder.encode(`: keep-alive\n\n`));
-          }
-          if (Date.now() > deadline) break;
-          await new Promise((r) => setTimeout(r, POLL_MS));
-          const next = await persistence.getReviewStatus(id, userId);
-          if (!next) break;
-          current = next;
+          await new Promise((res) => setTimeout(res, POLL_MS));
         }
       } catch (err) {
-        console.error(`[GET /api/reviews/${id}/events]`, err);
+        console.warn(`[sse] ${reviewId}:`, (err as Error).message);
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the client */
+        }
       }
     },
   });
@@ -66,9 +66,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store, no-transform",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
+      "X-Accel-Buffering": "no", // tell proxies not to buffer the stream
     },
   });
 }

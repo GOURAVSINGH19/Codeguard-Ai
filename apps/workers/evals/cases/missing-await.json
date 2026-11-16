@@ -1,0 +1,36 @@
+{
+  "name": "missing-await",
+  "description": "The card charge is no longer awaited, so the order is marked paid even if the charge fails.",
+  "title": "Speed up checkout",
+  "body": "Don't block on the payment call.",
+  "files": [
+    {
+      "path": "src/orders/checkout.ts",
+      "before": [
+        "import { db } from \"../db\";",
+        "import { chargeCard } from \"../payments\";",
+        "",
+        "export async function checkout(orderId: string, cardToken: string) {",
+        "  const order = await db.orders.find(orderId);",
+        "  if (!order) throw new Error(\"order not found\");",
+        "  await chargeCard(cardToken, order.total);",
+        "  await db.orders.update(orderId, { status: \"paid\" });",
+        "  return { ok: true };",
+        "}"
+      ],
+      "after": [
+        "import { db } from \"../db\";",
+        "import { chargeCard } from \"../payments\";",
+        "",
+        "export async function checkout(orderId: string, cardToken: string) {",
+        "  const order = await db.orders.find(orderId);",
+        "  if (!order) throw new Error(\"order not found\");",
+        "  chargeCard(cardToken, order.total);",
+        "  await db.orders.update(orderId, { status: \"paid\" });",
+        "  return { ok: true };",
+        "}"
+      ]
+    }
+  ],
+  "expected": [{ "file": "src/orders/checkout.ts", "line": 7, "category": "bug" }]
+}

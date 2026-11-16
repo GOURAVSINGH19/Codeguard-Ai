@@ -1,57 +1,23 @@
-
+/** Topic names: one place, so web and workers can't drift apart. */
 export const TOPICS = {
-  /**
-   * Published by: Next.js API route (POST /api/webhooks/github)
-   * Consumed by:  webhookProcessor worker
-   *
-   * Payload: raw GitHub webhook body + event type header
-   */
-  WEBHOOK_RECEIVED: "codeguard.webhook.received",
-
-  /**
-   * Published by: webhookProcessor (after filtering PR events)
-   *              Next.js API route (POST /api/github/review) for dashboard requests
-   *              reviewRecoverySweeper (stale / unpublished reviews)
-   * Consumed by:  reviewProcessor worker
-   *
-   * Payload: { owner, repo, pullNumber, userId, triggeredBy }
-   */
-  REVIEW_REQUESTED: "codeguard.review.requested",
-
-  /**
-   * Published by: reviewProcessor worker (after AI review completes)
-   * Consumed by:  future notification worker, analytics, etc.
-   *
-   * Payload: { reviewId, prNumber, score, issueCount, userId }
-   */
-  REVIEW_COMPLETED: "codeguard.review.completed",
-
-  /**
-   * Published by: webhookProcessor (on push events to indexed repos)
-   * Consumed by:  incrementalIndexer worker
-   *
-   * Payload: { owner, repo, repositoryId, changedFiles, headSha, pusher }
-   */
-  INDEX_INCREMENTAL: "codeguard.index.incremental",
-
-  /**
-   * Published by: webhookProcessor (App installed / repositories added)
-   *               reviewProcessor (backfill when a reviewed repo has no index)
-   * Consumed by:  fullIndexer worker
-   *
-   * Payload: { owner, repo, repositoryId, installationId, reason }
-   */
-  INDEX_FULL: "codeguard.index.full",
-
-  /**
-   * Dead-letter topics. A message lands here (with the error attached) when
-   * it cannot be parsed or keeps failing after retries, instead of being
-   * silently dropped or blocking its partition.
-   */
-  WEBHOOK_RECEIVED_DLQ: "codeguard.webhook.received.dlq",
-  REVIEW_REQUESTED_DLQ: "codeguard.review.requested.dlq",
-  INDEX_INCREMENTAL_DLQ: "codeguard.index.incremental.dlq",
-  INDEX_FULL_DLQ: "codeguard.index.full.dlq",
+  webhookReceived: "codeguard.webhook.received",
+  reviewRequested: "codeguard.review.requested",
+  repoIndexRequested: "codeguard.repo.index.requested",
 } as const;
 
-export type TopicName = (typeof TOPICS)[keyof typeof TOPICS];
+/** Partition key for repo-level work: one repo's index jobs run in order, never two at once. */
+export const repoKey = (repositoryId: string) => `repo:${repositoryId}`;
+
+export type Topic = (typeof TOPICS)[keyof typeof TOPICS];
+
+/** Dead-letter topic: where a message goes after it keeps failing. */
+export const dlq = (topic: string) => `${topic}.dlq`;
+
+export const ALL_TOPICS: string[] = Object.values(TOPICS).flatMap((t) => [t, dlq(t)]);
+
+/**
+ * Partition key for everything about one PR.
+ * Same key → same partition → events for PR #7 are processed in order,
+ * while different PRs run in parallel.
+ */
+export const prKey = (repoFullName: string, prNumber: number) => `${repoFullName.toLowerCase()}#${prNumber}`;

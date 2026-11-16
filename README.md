@@ -14,9 +14,9 @@ posts inline comments plus a Check Run that can block the merge.
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
 ![Kafka](https://img.shields.io/badge/Apache%20Kafka-event%20driven-231F20?logo=apachekafka&logoColor=white)
 ![Postgres](https://img.shields.io/badge/Postgres-pgvector-4169E1?logo=postgresql&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-239%20passing-brightgreen)
 
-[**▶ Watch the demo**](#-demo) · [Architecture](#-architecture) · [How a review works](#-how-a-review-works) · [Engineering decisions](#-engineering-decisions) · [Run it locally](#-run-it-locally)
+[**▶ Watch the demo**](#-demo) · [**📖 Docs (HLD)**](docs/HLD.md) · [Architecture](#-architecture) · [How a review works](#-how-a-review-works) · [Engineering decisions](#-engineering-decisions) · [Run it locally](#-run-it-locally)
 
 </div>
 
@@ -27,9 +27,18 @@ posts inline comments plus a Check Run that can block the merge.
 - **Event-driven backend.** GitHub webhooks are verified, saved to an outbox table and handed to Kafka. The HTTP handler returns right away, and the AI work happens in separate worker processes.
 - **Blast-radius analysis.** Tree-sitter builds an import graph for the repo, and BFS over reverse edges finds every file affected by a change. A one-line edit to a widely imported utility counts for more than 200 lines in an isolated test.
 - **RAG on the actual codebase.** Code is chunked by AST, embedded, and searched with pgvector. Reviews can say *"verifyJWT.ts trusts this value"* instead of giving generic advice.
-- **A 25-step staged pipeline.** Change analysis, then risk assessment, then three reviewers in parallel, then independent verification, scorecard and policy decision.
+- **A 24-step staged pipeline.** Change analysis, then risk assessment, then three reviewers in parallel, then independent verification, scorecard and policy decision.
 - **Built to fail safely.** Transactional outbox, idempotency keys, dead-letter topics, retries with backoff, recovery sweepers, and Zod validation on every model response.
 - **Works with any model provider.** Groq, OpenAI or Anthropic, chosen with one env var. Each provider only ever sees its own key.
+
+---
+
+## 📖 Documentation
+
+New to the project? Start with the **[High-Level Design](docs/HLD.md)**: what CodeGuard is, why it exists and how the pieces fit, in plain words. Then:
+
+- **[docs/steps/](docs/HLD.md#4-how-one-pull-request-flows-through-the-system)**: one short page per step of a review, from connecting a repo to recovering from failures.
+- **[docs/ai/](docs/ai/README.md)**: one page per AI idea (LLM basics, prompt injection, structured output, RAG, context engineering, blast radius, the verifier, evals, pipeline vs agent).
 
 ---
 
@@ -85,7 +94,7 @@ flowchart LR
 
     subgraph Workers["Workers · Docker"]
         WP[webhookProcessor]
-        RP[reviewProcessor<br/>25-step pipeline]
+        RP[reviewProcessor<br/>24-step pipeline]
         IX[full / incremental<br/>indexer]
         SW[outbox & recovery<br/>sweepers]
     end
@@ -129,7 +138,7 @@ flowchart TD
 | Step | What happens | Code |
 | --- | --- | --- |
 | **Ingest** | HMAC SHA-256 check with `timingSafeEqual`, de-duplication by `X-GitHub-Delivery`, saved to the outbox *before* publishing. A sweeper republishes anything Kafka missed. | [`apps/web/src/app/api/webhooks`](apps/web/src/app/api/webhooks), [`webhookOutboxSweeper.ts`](apps/workers/src/jobs/webhookOutboxSweeper.ts) |
-| **Blast radius** | Tree-sitter extracts imports (TS/JS, Python, Go, Java, Rust, C++). BFS over reverse edges ranks affected files, then the riskiest complete patches fill the model's budget. | [`DependencyGraph.ts`](apps/workers/src/analyzers/DependencyGraph.ts), [`PRDiffSelector.ts`](apps/workers/src/analyzers/PRDiffSelector.ts) |
+| **Blast radius** | Tree-sitter extracts imports (TS/JS, Python, Go, Java, Rust, C++). BFS over reverse edges ranks affected files, then the riskiest complete patches fill the model's budget. | [`DependencyGraph.ts`](apps/workers/src/analyzers/DependencyGraph.ts), [`risk.ts`](packages/review-engine/src/assurance/risk.ts) |
 | **RAG** | AST-aware chunks are embedded with `text-embedding-3-small`. The diff is the query, and the nearest chunks go into the prompt as codebase context. | [`ASTChunker.ts`](apps/workers/src/analyzers/ASTChunker.ts), [`RAGService.ts`](apps/workers/src/rag/RAGService.ts) |
 | **Staged review** | Three stages of reviewers, run in parallel within each stage. Every response is parsed with Zod and gets one repair attempt before it's rejected. | [`pipeline/nodes/stages.ts`](apps/workers/src/pipeline/nodes/stages.ts), [`review-engine/src/assurance`](packages/review-engine/src/assurance) |
 | **Verify** | A separate model call marks each finding *confirmed*, *uncertain* (dropped one severity) or *rejected* (removed). Only confirmed findings can fail the check. | [`verify.ts`](packages/review-engine/src/verify.ts), [`finalize.ts`](apps/workers/src/pipeline/nodes/finalize.ts) |
@@ -220,7 +229,7 @@ roughly *parse → auth → one service call → respond*, and the logic lives i
 | Code analysis | Tree-sitter (7 languages), BFS dependency graph |
 | AI | Groq `openai/gpt-oss-120b` / OpenAI / Anthropic · OpenAI embeddings |
 | Validation | Zod, end to end (env, API, events, model output) |
-| Quality | Vitest (169 tests), strict typecheck, ESLint, gitleaks, `pnpm audit`, Dependabot |
+| Quality | Vitest (239 tests), strict typecheck, ESLint, gitleaks, `pnpm audit`, Dependabot |
 | CI | GitHub Actions: typecheck ∥ lint ∥ test ∥ migrations & audit ∥ secret scan → build |
 
 ---
@@ -234,10 +243,10 @@ codeguard-ai/
 │   │   └── src/
 │   │       ├── app/api/           # webhooks · review · reviews (+ live events) · github
 │   │       ├── services/          # business logic (Review, GitHub, Persistence, User)
-│   │       └── components/        # dashboard, PR reviewer
+│   │       └── components/        # dashboard, repos, PRs, review pages
 │   └── workers/                   # Kafka consumers (Docker image)
 │       └── src/
-│           ├── pipeline/          # 25-step staged review (prepare → stages → finalize)
+│           ├── pipeline/          # 24-step staged review (prepare → stages → finalize)
 │           ├── analyzers/         # Tree-sitter imports, AST chunker, dependency graph
 │           ├── jobs/              # webhook / review / indexers / outbox & recovery sweepers
 │           ├── rag/               # pgvector similarity search
@@ -248,9 +257,12 @@ codeguard-ai/
 │   ├── db/                        # Drizzle schema (8 tables) + migrations
 │   ├── config/                    # Zod-validated env, one source of truth
 │   └── types/                     # shared Zod schemas
-├── infra/kafka/                   # Kafka image for a private cloud service
-├── docs/demo/                     # demo video + the HTML it's recorded from
-└── docker-compose.yml             # Kafka + worker (+ Redis)
+├── docs/
+│   ├── HLD.md                     # start here: what CodeGuard is and how it works
+│   ├── steps/                     # one page per step of a review (01 → 13)
+│   ├── ai/                        # one page per AI idea (LLM basics → evals)
+│   └── demo/                      # demo video + the HTML it's recorded from
+└── docker-compose.yml             # Kafka + worker
 ```
 
 ---
@@ -328,7 +340,7 @@ instructions: |      # team conventions added to the prompt
 ## 🗺 Roadmap
 
 - **Learning from feedback.** Use dismissed findings as team memory to suppress patterns a repo keeps rejecting.
-- **Evaluation set.** Real PRs with known bugs, to measure precision and recall across models and prompts.
+- **Bigger evaluation set.** Grow the [eval harness](apps/workers/evals/README.md) with cases mined from real bug-fix commits, and compare models.
 - **Jira / Linear intent check.** Compare the PR against the ticket it claims to implement.
 - **Fully self-hosted mode.** Docker Compose with a local model instead of a hosted LLM.
 

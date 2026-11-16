@@ -1,63 +1,65 @@
-import { describe, it, expect } from "vitest";
-import { annotatePatch, buildDiffContext } from "../diff";
+import { describe, expect, it } from "vitest";
+import { addedLines, buildDiffContext, commentableLines, numberPatch, parsePatch } from "../diff";
 
-const PATCH = [
-  "@@ -10,4 +10,5 @@ function load() {",
-  " const a = 1;",
-  "-const b = 2;",
-  "+const b = 3;",
-  "+const c = 4;",
-  " return a;",
-  "\\ No newline at end of file",
-].join("\n");
+const PATCH = `@@ -10,4 +10,5 @@ export function verify(token) {
+   const header = decode(token);
+-  const ALG = "RS256";
++  const ALG = process.env.JWT_ALG ?? "none";
++  log(ALG);
+   return check(header, ALG);
+ }
+\\ No newline at end of file`;
 
-describe("annotatePatch", () => {
-  it("numbers added and context lines with their NEW-file line number", () => {
-    const { text, commentableLines } = annotatePatch(PATCH);
-    expect(text).toContain("   10   const a = 1;");
-    expect(text).toContain("      - const b = 2;");
-    expect(text).toContain("   11 + const b = 3;");
-    expect(text).toContain("   12 + const c = 4;");
-    expect(text).toContain("   13   return a;");
-    expect(text).not.toContain("No newline");
-    expect([...commentableLines]).toEqual([10, 11, 12, 13]);
+describe("parsePatch", () => {
+  it("tracks new-file line numbers through context, removed and added lines", () => {
+    const lines = parsePatch(PATCH);
+    expect(lines.map((l) => [l.kind, l.newLine])).toEqual([
+      [" ", 10],
+      ["-", undefined],
+      ["+", 11],
+      ["+", 12],
+      [" ", 13],
+      [" ", 14],
+    ]);
   });
+});
 
-  it("handles several hunks", () => {
-    const patch = "@@ -1,1 +1,1 @@\n-a\n+b\n@@ -50,0 +50,2 @@\n+x\n+y";
-    expect([...annotatePatch(patch).commentableLines]).toEqual([1, 50, 51]);
+describe("commentable / added lines", () => {
+  it("allows comments on added + context lines (what GitHub accepts)", () => {
+    expect([...commentableLines(PATCH)]).toEqual([10, 11, 12, 13, 14]);
+  });
+  it("added lines are only what this change introduced", () => {
+    expect([...addedLines(PATCH)]).toEqual([11, 12]);
+  });
+  it("handles a missing patch (binary file)", () => {
+    expect(commentableLines(undefined).size).toBe(0);
+  });
+});
+
+describe("numberPatch", () => {
+  it("prints the real line number on every added line so the model can cite it", () => {
+    const out = numberPatch(PATCH);
+    expect(out).toContain('+   11 |   const ALG = process.env.JWT_ALG ?? "none";');
+    expect(out).toContain('-      |   const ALG = "RS256";');
   });
 });
 
 describe("buildDiffContext", () => {
-  const file = (filename: string, size: number, patch: string | null = "@@ -1 +1 @@\n+" + "x".repeat(size)) => ({
-    filename,
-    status: "modified",
-    additions: size,
-    deletions: 0,
-    patch,
+  const file = (filename: string, patch: string | undefined, status = "modified") => ({ filename, status, additions: 1, deletions: 0, patch });
+
+  it("skips lockfiles, deleted and binary files, with a reason", () => {
+    const ctx = buildDiffContext(
+      [file("src/a.ts", PATCH), file("pnpm-lock.yaml", PATCH), file("img.png", undefined), file("old.ts", PATCH, "removed")],
+      10_000,
+    );
+    expect(ctx.included.map((f) => f.filename)).toEqual(["src/a.ts"]);
+    expect(ctx.skipped.map((s) => s.filename).sort()).toEqual(["img.png", "old.ts", "pnpm-lock.yaml"]);
   });
 
-  it("keeps whole files and reports what did not fit", () => {
-    const ctx = buildDiffContext([file("a.ts", 100), file("big.ts", 5_000), file("b.ts", 100)], { budgetChars: 1_000 });
-    expect(ctx.includedFiles).toEqual(["a.ts", "b.ts"]);
-    expect(ctx.excludedFiles).toEqual(["big.ts"]);
-    expect(ctx.text).not.toContain("big.ts");
-  });
-
-  it("follows the priority order before size order", () => {
-    const ctx = buildDiffContext([file("small.ts", 1), file("large.ts", 50)], { priorityOrder: ["small.ts"] });
-    expect(ctx.includedFiles).toEqual(["small.ts", "large.ts"]);
-  });
-
-  it("lists files without a patch separately", () => {
-    const ctx = buildDiffContext([file("logo.png", 0, null), file("a.ts", 3)]);
-    expect(ctx.noPatchFiles).toEqual(["logo.png"]);
-    expect(ctx.commentable.has("a.ts")).toBe(true);
-  });
-
-  it("escapes file names inside the XML-like wrapper", () => {
-    const ctx = buildDiffContext([file('evil".ts', 1)]);
-    expect(ctx.text).toContain('path="evil&quot;.ts"');
+  it("stops at the token budget and reports what was left out", () => {
+    const big = "@@ -1,1 +1,400 @@\n" + Array.from({ length: 400 }, (_, i) => `+line ${i} ${"x".repeat(40)}`).join("\n");
+    const ctx = buildDiffContext([file("small.ts", PATCH), file("big.ts", big)], 500);
+    expect(ctx.included.map((f) => f.filename)).toEqual(["small.ts"]);
+    expect(ctx.skipped).toContainEqual({ filename: "big.ts", reason: "over the token budget" });
   });
 });

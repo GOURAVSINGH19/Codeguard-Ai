@@ -1,0 +1,25 @@
+{
+  "name": "clean-refactor",
+  "description": "A correct refactor. Any finding here is a false positive.",
+  "title": "Extract cents constant in formatPrice",
+  "body": "No behaviour change.",
+  "files": [
+    {
+      "path": "src/utils/format.ts",
+      "before": [
+        "export function formatPrice(cents: number): string {",
+        "  return \"$\" + (cents / 100).toFixed(2);",
+        "}"
+      ],
+      "after": [
+        "const CENTS_PER_DOLLAR = 100;",
+        "",
+        "export function formatPrice(cents: number): string {",
+        "  const dollars = cents / CENTS_PER_DOLLAR;",
+        "  return `$${dollars.toFixed(2)}`;",
+        "}"
+      ]
+    }
+  ],
+  "expected": []
+}

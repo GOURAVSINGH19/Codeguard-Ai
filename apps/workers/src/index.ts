@@ -1,72 +1,82 @@
-import "dotenv/config";
-import { getEnv } from "@codeguard/config";
-import { ensureTopicsExist } from "@codeguard/kafka";
-import { startWebhookProcessor } from "./jobs/webhookProcessor.js";
-import { startReviewProcessor } from "./jobs/reviewProcessor.js";
-import { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
-import { startFullIndexer } from "./jobs/fullIndexer.js";
-import { startWebhookOutboxSweeper, stopWebhookOutboxSweeper } from "./jobs/webhookOutboxSweeper.js";
-import { startReviewRecoverySweeper, stopReviewRecoverySweeper } from "./jobs/reviewRecoverySweeper.js";
-import { disconnectProducer } from "./queue/kafkaClient.js";
-import { disconnectConsumers } from "./queue/consumer.js";
-import { logger } from "./lib/logger.js";
+import "./env"; // must be first: loads env before other modules read process.env
 
-// Export indexRepository so it can be run directly:
-//   npx tsx src/index.ts index <owner> <repo> <repositoryId>
-export { indexRepository } from "./jobs/indexRepository.js";
-export { startIncrementalIndexer } from "./jobs/incrementalIndexer.js";
+import { getEnv } from "@codeguard/config";
+import {
+  consume,
+  disconnectProducer,
+  ensureTopics,
+  TOPICS,
+  RepoIndexRequested,
+  ReviewRequested,
+  WebhookReceived,
+} from "@codeguard/kafka";
+import { createProvider, localEmbedder } from "@codeguard/review-engine";
+import { createIndexJob } from "./jobs/index-repo";
+import { onWebhookReceived } from "./jobs/router";
+import { createReviewJob } from "./jobs/review";
+import { startSweepers } from "./sweepers";
 
 /**
- * Start all consumer workers concurrently.
- * Each processor runs an infinite consumer loop — they do not resolve.
+ * CodeGuard workers: the slow part of the system.
+ *
+ *   codeguard.webhook.received     ──▶ router ──▶ review.requested / repo.index.requested
+ *   codeguard.review.requested     ──▶ review ──▶ DB + GitHub
+ *   codeguard.repo.index.requested ──▶ index  ──▶ code_chunks + code_files
+ *   + sweepers (outbox, stuck reviews)
+ *
+ * Each consumer group can be scaled by running more copies of this process;
+ * Kafka splits the partitions between them.
  */
 async function main() {
-  // Fail fast on a malformed environment (bad enum, non-numeric port, …).
-  getEnv();
+  const env = getEnv(); // fail fast on missing config
+  const provider = createProvider(env); // fail fast on a missing model key
+  const embedder = localEmbedder();
 
-  await ensureTopicsExist();
-  startWebhookOutboxSweeper();
-  startReviewRecoverySweeper();
+  await ensureTopics();
 
-  await Promise.all(
-    [
-      ["webhookProcessor", startWebhookProcessor],
-      ["reviewProcessor", startReviewProcessor],
-      ["incrementalIndexer", startIncrementalIndexer],
-      ["fullIndexer", startFullIndexer],
-    ].map(([name, start]) =>
-      (start as () => Promise<void>)().catch((err) => {
-        logger.error("processor crashed", { processor: name, error: (err as Error).message });
-        process.exit(1);
-      })
-    )
-  );
-}
+  const consumers = await Promise.all([
+    consume({
+      topic: TOPICS.webhookReceived,
+      groupId: "codeguard-router",
+      schema: WebhookReceived,
+      handler: onWebhookReceived,
+      partitionsConsumedConcurrently: 3,
+    }),
+    consume({
+      topic: TOPICS.reviewRequested,
+      groupId: "codeguard-review",
+      schema: ReviewRequested,
+      handler: createReviewJob({ provider, embedder }),
+      maxAttempts: 2, // a full retry re-runs the model; keep it to one
+      partitionsConsumedConcurrently: 2, // at most 2 reviews at once per process (LLM rate limits)
+    }),
+    consume({
+      topic: TOPICS.repoIndexRequested,
+      groupId: "codeguard-index",
+      schema: RepoIndexRequested,
+      handler: createIndexJob(embedder),
+      maxAttempts: 3,
+      partitionsConsumedConcurrently: 1, // embedding is CPU-heavy: one repo at a time
+    }),
+  ]);
+  const stopSweepers = startSweepers();
+  console.info(`[workers] ready · model ${provider.name}/${provider.model} · embeddings ${embedder.model}`);
 
-/**
- * Graceful shutdown — disconnect consumers first (commits offsets and leaves
- * the group cleanly), then the shared producer.
- */
-let shuttingDown = false;
-async function shutdown(signal: string) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  logger.info("shutting down", { signal });
-  try {
-    stopWebhookOutboxSweeper();
-    stopReviewRecoverySweeper();
-    await disconnectConsumers();
+  // Leave the consumer groups cleanly so partitions are reassigned quickly.
+  let stopping = false;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    stopSweepers();
+    await Promise.allSettled(consumers.map((c) => c.disconnect()));
     await disconnectProducer();
-  } catch (err) {
-    logger.error("error during shutdown", { error: String(err) });
-  }
-  process.exit(0);
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop());
 }
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
 
 main().catch((err) => {
-  logger.error("worker failed to start", { error: (err as Error).message });
+  console.error("[workers] failed to start:", err);
   process.exit(1);
 });

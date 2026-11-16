@@ -1,81 +1,9 @@
 {
-  "id": "9b404b63-65b3-465d-b1bb-c6576c954d7a",
-  "prevId": "e27c01b8-1b87-40ed-a6c4-dc255c2f21ad",
+  "id": "88330a28-88dc-4a3b-bebc-2bcdb897af58",
+  "prevId": "2cca6a43-b4ef-4451-9f77-16715379e5a0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.users": {
-      "name": "users",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "github_id": {
-          "name": "github_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_login": {
-          "name": "github_login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_email": {
-          "name": "github_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "avatar_url": {
-          "name": "avatar_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "users_github_id_unique": {
-          "name": "users_github_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "github_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.github_installations": {
       "name": "github_installations",
       "schema": "",
@@ -89,12 +17,6 @@
         },
         "installation_id": {
           "name": "installation_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_app_id": {
-          "name": "github_app_id",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true
@@ -123,16 +45,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "user_id": {
-          "name": "user_id",
+        "owner_user_id": {
+          "name": "owner_user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "status": {
           "name": "status",
-          "type": "installation_status",
-          "typeSchema": "public",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
@@ -141,19 +62,15 @@
           "name": "permissions",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "events": {
           "name": "events",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": false
-        },
-        "suspended_at": {
-          "name": "suspended_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -170,7 +87,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "github_installations_owner_idx": {
+          "name": "github_installations_owner_idx",
+          "columns": [
+            {
+              "expression": "owner_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -205,13 +138,7 @@
         },
         "installation_id": {
           "name": "installation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "full_name": {
-          "name": "full_name",
-          "type": "text",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true
         },
@@ -227,19 +154,24 @@
           "primaryKey": false,
           "notNull": true
         },
-        "default_branch": {
-          "name": "default_branch",
+        "full_name": {
+          "name": "full_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'main'"
+          "notNull": true
         },
-        "is_private": {
-          "name": "is_private",
+        "private": {
+          "name": "private",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "html_url": {
+          "name": "html_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "language": {
           "name": "language",
@@ -253,210 +185,34 @@
           "primaryKey": false,
           "notNull": false
         },
-        "status": {
-          "name": "status",
-          "type": "repository_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        },
         "auto_review_enabled": {
           "name": "auto_review_enabled",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": true
         },
-        "clone_url": {
-          "name": "clone_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "html_url": {
-          "name": "html_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
+        "active": {
+          "name": "active",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": "now()"
+          "default": true
         },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "repositories_installation_id_github_installations_id_fk": {
-          "name": "repositories_installation_id_github_installations_id_fk",
-          "tableFrom": "repositories",
-          "tableTo": "github_installations",
-          "columnsFrom": [
-            "installation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "repositories_github_repo_id_unique": {
-          "name": "repositories_github_repo_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "github_repo_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.pull_requests": {
-      "name": "pull_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "repository_id": {
-          "name": "repository_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_pr_id": {
-          "name": "github_pr_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "pr_number": {
-          "name": "pr_number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "body": {
-          "name": "body",
+        "default_branch": {
+          "name": "default_branch",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "state": {
-          "name": "state",
-          "type": "pr_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "head_branch": {
-          "name": "head_branch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "base_branch": {
-          "name": "base_branch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "head_sha": {
-          "name": "head_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "base_sha": {
-          "name": "base_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "author_github_id": {
-          "name": "author_github_id",
+        "indexed_sha": {
+          "name": "indexed_sha",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "author_login": {
-          "name": "author_login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "additions": {
-          "name": "additions",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 0
-        },
-        "deletions": {
-          "name": "deletions",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 0
-        },
-        "changed_files": {
-          "name": "changed_files",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 0
-        },
-        "labels": {
-          "name": "labels",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "merged_at": {
-          "name": "merged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "github_created_at": {
-          "name": "github_created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "github_updated_at": {
-          "name": "github_updated_at",
+        "indexed_at": {
+          "name": "indexed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -477,45 +233,148 @@
         }
       },
       "indexes": {
-        "pull_requests_repo_pr_number_uq": {
-          "name": "pull_requests_repo_pr_number_uq",
+        "repositories_installation_idx": {
+          "name": "repositories_installation_idx",
           "columns": [
             {
-              "expression": "repository_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "pr_number",
+              "expression": "installation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "repositories_full_name_idx": {
+          "name": "repositories_full_name_idx",
+          "columns": [
+            {
+              "expression": "full_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
         }
       },
-      "foreignKeys": {
-        "pull_requests_repository_id_repositories_id_fk": {
-          "name": "pull_requests_repository_id_repositories_id_fk",
-          "tableFrom": "pull_requests",
-          "tableTo": "repositories",
-          "columnsFrom": [
-            "repository_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "repositories_github_repo_id_unique": {
+          "name": "repositories_github_repo_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "github_repo_id"
+          ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.webhook_events": {
+      "name": "webhook_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "delivery_id": {
+          "name": "delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'received'"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "webhook_events_status_received_idx": {
+          "name": "webhook_events_status_received_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "received_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "webhook_events_delivery_id_unique": {
+          "name": "webhook_events_delivery_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "delivery_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -531,67 +390,84 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "user_id": {
-          "name": "user_id",
+        "repo_full_name": {
+          "name": "repo_full_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "pull_request_id": {
-          "name": "pull_request_id",
-          "type": "uuid",
+        "pr_number": {
+          "name": "pr_number",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "head_sha": {
           "name": "head_sha",
           "type": "text",
           "primaryKey": false,
+          "notNull": true
+        },
+        "installation_id": {
+          "name": "installation_id",
+          "type": "bigint",
+          "primaryKey": false,
           "notNull": false
         },
-        "title": {
-          "name": "title",
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "progress": {
+          "name": "progress",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "code_snippet": {
-          "name": "code_snippet",
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'webhook'"
+        },
+        "review_type": {
+          "name": "review_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pr'"
+        },
+        "pr_title": {
+          "name": "pr_title",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "language": {
-          "name": "language",
+        "pull_request": {
+          "name": "pull_request",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_sha": {
+          "name": "base_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_from_sha": {
+          "name": "reviewed_from_sha",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "score": {
           "name": "score",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "review_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "review_type": {
-          "name": "review_type",
-          "type": "review_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'automated'"
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
@@ -601,14 +477,51 @@
           "primaryKey": false,
           "notNull": false
         },
-        "overall_score": {
-          "name": "overall_score",
+        "error": {
+          "name": "error",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "metadata": {
-          "name": "metadata",
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tokens": {
+          "name": "tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "check_run_id": {
+          "name": "check_run_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "github_review_url": {
+          "name": "github_review_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assurance": {
+          "name": "assurance",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -641,11 +554,17 @@
         }
       },
       "indexes": {
-        "reviews_pr_head_sha_active_uq": {
-          "name": "reviews_pr_head_sha_active_uq",
+        "reviews_repo_pr_sha_uq": {
+          "name": "reviews_repo_pr_sha_uq",
           "columns": [
             {
-              "expression": "pull_request_id",
+              "expression": "repo_full_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "pr_number",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -655,29 +574,16 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            },
-            {
-              "expression": "coalesce(\"user_id\", '')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"reviews\".\"head_sha\" IS NOT NULL AND \"reviews\".\"status\" <> 'failed'",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "reviews_user_created_idx": {
-          "name": "reviews_user_created_idx",
+        "reviews_created_at_idx": {
+          "name": "reviews_created_at_idx",
           "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "created_at",
               "isExpression": false,
@@ -690,17 +596,11 @@
           "method": "btree",
           "with": {}
         },
-        "reviews_status_updated_idx": {
-          "name": "reviews_status_updated_idx",
+        "reviews_status_idx": {
+          "name": "reviews_status_idx",
           "columns": [
             {
               "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "updated_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -712,29 +612,15 @@
           "with": {}
         }
       },
-      "foreignKeys": {
-        "reviews_pull_request_id_pull_requests_id_fk": {
-          "name": "reviews_pull_request_id_pull_requests_id_fk",
-          "tableFrom": "reviews",
-          "tableTo": "pull_requests",
-          "columnsFrom": [
-            "pull_request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.review_comments": {
-      "name": "review_comments",
+    "public.review_findings": {
+      "name": "review_findings",
       "schema": "",
       "columns": {
         "id": {
@@ -750,46 +636,32 @@
           "primaryKey": false,
           "notNull": true
         },
-        "file_path": {
-          "name": "file_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'snippet'"
-        },
-        "line_number": {
-          "name": "line_number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "line_start": {
-          "name": "line_start",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "line_end": {
-          "name": "line_end",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "side": {
-          "name": "side",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'RIGHT'"
-        },
-        "comment": {
-          "name": "comment",
+        "file": {
+          "name": "file",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "body": {
-          "name": "body",
+        "line": {
+          "name": "line",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message": {
+          "name": "message",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -800,33 +672,12 @@
           "primaryKey": false,
           "notNull": false
         },
-        "severity": {
-          "name": "severity",
-          "type": "comment_severity",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'low'"
-        },
-        "category": {
-          "name": "category",
-          "type": "comment_category",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'other'"
-        },
-        "github_comment_id": {
-          "name": "github_comment_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
         "source": {
           "name": "source",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "'ai'"
         },
         "confidence": {
           "name": "confidence",
@@ -834,43 +685,12 @@
           "primaryKey": false,
           "notNull": false
         },
-        "rule_id": {
-          "name": "rule_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "status": {
           "name": "status",
-          "type": "finding_status",
-          "typeSchema": "public",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "default": "'open'"
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "resolved_by": {
-          "name": "resolved_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "resolution_note": {
-          "name": "resolution_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -888,8 +708,8 @@
         }
       },
       "indexes": {
-        "review_comments_review_idx": {
-          "name": "review_comments_review_idx",
+        "review_findings_review_idx": {
+          "name": "review_findings_review_idx",
           "columns": [
             {
               "expression": "review_id",
@@ -905,9 +725,9 @@
         }
       },
       "foreignKeys": {
-        "review_comments_review_id_reviews_id_fk": {
-          "name": "review_comments_review_id_reviews_id_fk",
-          "tableFrom": "review_comments",
+        "review_findings_review_id_reviews_id_fk": {
+          "name": "review_findings_review_id_reviews_id_fk",
+          "tableFrom": "review_findings",
           "tableTo": "reviews",
           "columnsFrom": [
             "review_id"
@@ -942,14 +762,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "file_path": {
-          "name": "file_path",
+        "path": {
+          "name": "path",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "language": {
-          "name": "language",
+        "symbol": {
+          "name": "symbol",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -972,35 +792,17 @@
           "primaryKey": false,
           "notNull": true
         },
-        "summary": {
-          "name": "summary",
-          "type": "text",
+        "embedding": {
+          "name": "embedding",
+          "type": "vector(384)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "commit_sha": {
           "name": "commit_sha",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "embedding": {
-          "name": "embedding",
-          "type": "vector(1536)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "token_count": {
-          "name": "token_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -1008,16 +810,30 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
         }
       },
       "indexes": {
+        "code_chunks_repo_path_idx": {
+          "name": "code_chunks_repo_path_idx",
+          "columns": [
+            {
+              "expression": "repository_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "path",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "code_chunks_embedding_idx": {
           "name": "code_chunks_embedding_idx",
           "columns": [
@@ -1031,28 +847,7 @@
           ],
           "isUnique": false,
           "concurrently": false,
-          "method": "ivfflat",
-          "with": {}
-        },
-        "code_chunks_repo_file_idx": {
-          "name": "code_chunks_repo_file_idx",
-          "columns": [
-            {
-              "expression": "repository_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "file_path",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
+          "method": "hnsw",
           "with": {}
         }
       },
@@ -1077,75 +872,37 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.webhook_events": {
-      "name": "webhook_events",
+    "public.code_files": {
+      "name": "code_files",
       "schema": "",
       "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "github_delivery_id": {
-          "name": "github_delivery_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "installation_id": {
-          "name": "installation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "repository_id": {
           "name": "repository_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "event": {
-          "name": "event",
+        "path": {
+          "name": "path",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "action": {
-          "name": "action",
+        "blob_sha": {
+          "name": "blob_sha",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },
-        "status": {
-          "name": "status",
-          "type": "webhook_delivery_status",
-          "typeSchema": "public",
+        "imports": {
+          "name": "imports",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": true,
-          "default": "'received'"
+          "default": "'{}'"
         },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "processed_at": {
-          "name": "processed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -1154,22 +911,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "webhook_events_installation_id_github_installations_id_fk": {
-          "name": "webhook_events_installation_id_github_installations_id_fk",
-          "tableFrom": "webhook_events",
-          "tableTo": "github_installations",
-          "columnsFrom": [
-            "installation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "webhook_events_repository_id_repositories_id_fk": {
-          "name": "webhook_events_repository_id_repositories_id_fk",
-          "tableFrom": "webhook_events",
+        "code_files_repository_id_repositories_id_fk": {
+          "name": "code_files_repository_id_repositories_id_fk",
+          "tableFrom": "code_files",
           "tableTo": "repositories",
           "columnsFrom": [
             "repository_id"
@@ -1177,123 +921,26 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "webhook_events_github_delivery_id_unique": {
-          "name": "webhook_events_github_delivery_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "code_files_repository_id_path_pk": {
+          "name": "code_files_repository_id_path_pk",
           "columns": [
-            "github_delivery_id"
+            "repository_id",
+            "path"
           ]
         }
       },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
     }
   },
-  "enums": {
-    "public.installation_status": {
-      "name": "installation_status",
-      "schema": "public",
-      "values": [
-        "active",
-        "suspended",
-        "deleted"
-      ]
-    },
-    "public.repository_status": {
-      "name": "repository_status",
-      "schema": "public",
-      "values": [
-        "active",
-        "inactive",
-        "archived"
-      ]
-    },
-    "public.pr_status": {
-      "name": "pr_status",
-      "schema": "public",
-      "values": [
-        "open",
-        "closed",
-        "merged",
-        "draft"
-      ]
-    },
-    "public.review_status": {
-      "name": "review_status",
-      "schema": "public",
-      "values": [
-        "pending",
-        "in_progress",
-        "completed",
-        "failed"
-      ]
-    },
-    "public.review_type": {
-      "name": "review_type",
-      "schema": "public",
-      "values": [
-        "automated",
-        "ai_suggested",
-        "paste_code"
-      ]
-    },
-    "public.comment_category": {
-      "name": "comment_category",
-      "schema": "public",
-      "values": [
-        "security",
-        "bug",
-        "performance",
-        "maintainability",
-        "style",
-        "correctness",
-        "test_coverage",
-        "documentation",
-        "other"
-      ]
-    },
-    "public.comment_severity": {
-      "name": "comment_severity",
-      "schema": "public",
-      "values": [
-        "critical",
-        "high",
-        "medium",
-        "low",
-        "major",
-        "minor",
-        "suggestion",
-        "info"
-      ]
-    },
-    "public.finding_status": {
-      "name": "finding_status",
-      "schema": "public",
-      "values": [
-        "open",
-        "resolved",
-        "dismissed"
-      ]
-    },
-    "public.webhook_delivery_status": {
-      "name": "webhook_delivery_status",
-      "schema": "public",
-      "values": [
-        "received",
-        "processing",
-        "processed",
-        "failed",
-        "ignored"
-      ]
-    }
-  },
+  "enums": {},
   "schemas": {},
   "sequences": {},
   "roles": {},

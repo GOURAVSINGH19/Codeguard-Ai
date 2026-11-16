@@ -1,53 +1,71 @@
-import { sql } from "drizzle-orm";
-import { doublePrecision, index, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { pullRequests } from "./pull-requests";
+import { pgTable, uuid, text, integer, bigint, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 
-export const reviewStatusEnum = pgEnum("review_status", [
-  "pending",
-  "in_progress",
-  "completed",
-  "failed",
-]);
+/** Snapshot of the PR at review time, so the review page doesn't need a GitHub call. */
+export interface PullRequestSnapshot {
+  owner: string;
+  repo: string;
+  number: number;
+  title: string;
+  htmlUrl: string;
+  headBranch: string;
+  baseBranch: string;
+  authorLogin: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
 
-export const reviewTypeEnum = pgEnum("review_type", [
-  "automated",
-  "ai_suggested",
-  "paste_code",
-]);
-
-export const reviews = pgTable("reviews", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: text("user_id"),
-  pullRequestId: uuid("pull_request_id")
-    .references(() => pullRequests.id, { onDelete: "cascade" }),
-  /** Commit the review ran against — with pullRequestId, the idempotency key. */
-  headSha: text("head_sha"),
-  title: text("title"),
-  codeSnippet: text("code_snippet"),
-  language: text("language"),
-  score: doublePrecision("score"),
-  status: reviewStatusEnum("status").default("pending").notNull(),
-  reviewType: reviewTypeEnum("review_type").default("automated").notNull(),
-  model: text("model"),
-  summary: text("summary"),
-  overallScore: text("overall_score"),
-  metadata: jsonb("metadata"),
-  startedAt: timestamp("started_at", { withTimezone: true }),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [
-  // At most one live (non-failed) review per PR commit per requester (NULL =
-  // automated): webhook redeliveries, double clicks and concurrent workers
-  // all collapse onto the same row.
-  uniqueIndex("reviews_pr_head_sha_active_uq")
-    .on(table.pullRequestId, table.headSha, sql`coalesce(${table.userId}, '')`)
-    .where(sql`${table.headSha} IS NOT NULL AND ${table.status} <> 'failed'`),
-  // Rate limiting and "my reviews" lookups.
-  index("reviews_user_created_idx").on(table.userId, table.createdAt),
-  // Stale-review recovery sweeps rows stuck in pending / in_progress.
-  index("reviews_status_updated_idx").on(table.status, table.updatedAt),
-]);
+/**
+ * One AI review of one commit of one PR.
+ *
+ * UNIQUE (repo, pr, head_sha): the same commit can be requested many times
+ * (redelivery, double click, Kafka redelivery). The database refuses the second
+ * row, so two workers can never review the same commit twice.
+ */
+export const reviews = pgTable(
+  "reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    repoFullName: text("repo_full_name").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    // Which installation token the worker uses for GitHub calls.
+    installationId: bigint("installation_id", { mode: "number" }),
+    status: text("status", { enum: ["pending", "in_progress", "completed", "failed"] })
+      .notNull()
+      .default("pending"),
+    // Current pipeline node; the UI maps these names to labels (src/lib/poll-review.ts).
+    progress: text("progress"),
+    trigger: text("trigger", { enum: ["webhook", "manual"] }).notNull().default("webhook"),
+    reviewType: text("review_type").notNull().default("pr"),
+    prTitle: text("pr_title"),
+    pullRequest: jsonb("pull_request").$type<PullRequestSnapshot>(),
+    // What the diff was computed against: the PR base, or the last reviewed commit (incremental).
+    baseSha: text("base_sha"),
+    reviewedFromSha: text("reviewed_from_sha"),
+    score: integer("score"),
+    summary: text("summary"),
+    error: text("error"),
+    // How many times the stuck-review sweeper has restarted this review (Day 3.4).
+    attempts: integer("attempts").notNull().default(0),
+    model: text("model"),
+    tokens: integer("tokens"),
+    durationMs: integer("duration_ms"),
+    checkRunId: bigint("check_run_id", { mode: "number" }),
+    githubReviewUrl: text("github_review_url"),
+    // Day 3: decision, scorecard, risk, verification… read whole by the review page.
+    assurance: jsonb("assurance").$type<Record<string, unknown>>(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("reviews_repo_pr_sha_uq").on(t.repoFullName, t.prNumber, t.headSha),
+    index("reviews_created_at_idx").on(t.createdAt),
+    index("reviews_status_idx").on(t.status),
+  ],
+);
 
 export type Review = typeof reviews.$inferSelect;
 export type NewReview = typeof reviews.$inferInsert;

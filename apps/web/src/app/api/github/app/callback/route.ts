@@ -1,74 +1,63 @@
-import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
-import { db, githubInstallations, eq } from "@codeguard/db";
-import { GitHubAppService } from "@/services/GitHubAppService";
-
-const INSTALL_STATE_COOKIE = "cg_install_state";
+import { cookies } from "next/headers";
+import { auth } from "@clerk/nextjs/server";
+import { RequestError } from "octokit";
+import { githubApp, type GhInstallation } from "@/server/github-app";
+import { STATE_COOKIE, stateCookieOptions, stateMatches } from "@/server/install-state";
+import { getGitHubIdentity, ownsAccount } from "@/server/ownership";
+import { syncInstallationRepositories, upsertInstallation } from "@/server/installation-sync";
 
 /**
- * GET /api/github/app/callback — GitHub App "Setup URL".
+ * GET /api/github/app/callback?installation_id=…&setup_action=install&state=…
  *
- * Requires "Request user authorization (OAuth) during installation" to be
- * enabled on the GitHub App so GitHub sends `code` along with
- * `installation_id`.
- *
- * Security: `installation_id` is attacker-controlled. We only link it to the
- * signed-in user after
- *   1. the `state` matches the cookie set by /api/github/app/install, and
- *   2. GitHub confirms (via the user's OAuth token) that this user can access
- *      that installation.
+ * GitHub's "Setup URL". Anyone can call this URL with any installation id, so
+ * it is checked twice before anything is linked:
+ *   1. state === the cookie we set in /install   (this browser started the flow)
+ *   2. GitHub confirms the user owns the account  (see server/ownership.ts)
+ * The result is reported to /install as ?success=1 or ?error=<code>.
  */
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const done = (query: string) => {
+  const back = (query: string) => {
     const res = NextResponse.redirect(new URL(`/install?${query}`, req.url));
-    res.cookies.delete({ name: INSTALL_STATE_COOKIE, path: "/api/github/app/callback" });
+    res.cookies.set(STATE_COOKIE, "", { ...stateCookieOptions, maxAge: 0 }); // one-time use
     return res;
   };
 
+  const { userId } = await auth();
+  if (!userId) return back("error=not_authenticated");
+
+  const url = new URL(req.url);
+  const setupAction = url.searchParams.get("setup_action");
+  const installationId = Number(url.searchParams.get("installation_id"));
+
+  // An org member asked an admin to approve the install: nothing to link yet.
+  if (setupAction === "request") return back("success=requested");
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) return back("error=missing_params");
+
+  // 1. CSRF check
+  const expected = (await cookies()).get(STATE_COOKIE)?.value;
+  if (!stateMatches(expected, url.searchParams.get("state"))) return back("error=invalid_state");
+
   try {
-    const { userId } = await auth();
-    if (!userId) return done("error=not_authenticated");
+    // Load the installation AS THE APP: proves it exists and gives us the real account.
+    const { data } = await githubApp().octokit.request("GET /app/installations/{installation_id}", {
+      installation_id: installationId,
+    });
+    const installation = data as unknown as GhInstallation;
 
-    const code = url.searchParams.get("code");
-    const installationId = Number(url.searchParams.get("installation_id"));
-    const setupAction = url.searchParams.get("setup_action");
-    const state = url.searchParams.get("state") ?? "";
-    const expectedState = req.headers.get("cookie")?.match(new RegExp(`${INSTALL_STATE_COOKIE}=([a-f0-9]+)`))?.[1] ?? "";
+    // 2. Ownership check with the user's own GitHub token
+    const identity = await getGitHubIdentity(userId);
+    if (!identity || !ownsAccount(identity, installation.account)) return back("error=forbidden");
 
-    if (!code || !Number.isInteger(installationId) || installationId <= 0) {
-      return done("error=missing_params");
-    }
-    if (!expectedState || !safeEqual(state, expectedState)) {
-      return done("error=invalid_state");
-    }
-
-    const app = GitHubAppService.fromEnv();
-    if (!(await app.userCanAccessInstallation(code, installationId))) {
-      console.warn(`[github-app-callback] user ${userId} tried to link installation ${installationId} they cannot access`);
-      return done("error=forbidden");
-    }
-
-    const installation = await app.getInstallation(installationId);
-    if (!installation) return done("error=installation_not_found");
-
-    await app.handleInstallationEvent(setupAction === "update" ? "new_permissions_accepted" : "created", installation);
-
-    await db
-      .update(githubInstallations)
-      .set({ userId, updatedAt: new Date() })
-      .where(eq(githubInstallations.installationId, installationId));
-
-    return done("success=true");
+    await upsertInstallation(installation, { ownerUserId: userId });
+    // The repo list can also arrive by webhook; a failure here isn't fatal.
+    await syncInstallationRepositories(installationId).catch((err) =>
+      console.warn(`[callback] repo sync for ${installationId} failed:`, (err as Error).message),
+    );
+    return back("success=1");
   } catch (err) {
-    console.error("[GET /api/github/app/callback]", err);
-    return done("error=install_failed");
+    if (err instanceof RequestError && err.status === 404) return back("error=installation_not_found");
+    console.error("[callback] install failed:", err);
+    return back("error=install_failed");
   }
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
